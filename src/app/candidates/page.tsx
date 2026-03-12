@@ -265,7 +265,7 @@ export default function CandidatesPage() {
               >
                 Close
               </button>
-              <a
+              
                 href={`https://www.instagram.com/${dmModal.username}/`}
                 target="_blank"
                 rel="noopener noreferrer"
