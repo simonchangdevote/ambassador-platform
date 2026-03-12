@@ -69,7 +69,6 @@ export async function scoutByHashtags(
 
   for (const hashtag of hashtags) {
     try {
-      // Run the Instagram Hashtag Scraper actor synchronously
       const response = await fetch(
         `${APIFY_BASE}/acts/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${apiToken}`,
         {
@@ -231,7 +230,6 @@ export async function fetchCreatorReels(
 export function aggregateCreatorProfiles(
   posts: ApifyHashtagResult[]
 ): Partial<Creator>[] {
-  // Group posts by username
   const byUsername = new Map<string, ApifyHashtagResult[]>();
   for (const post of posts) {
     if (!post.ownerUsername) continue;
@@ -243,8 +241,6 @@ export function aggregateCreatorProfiles(
   const creators: Partial<Creator>[] = [];
 
   for (const [username, userPosts] of byUsername) {
-    const totalLikes = userPosts.reduce((sum, p) => sum + (p.likesCount ?? 0), 0);
-    const totalComments = userPosts.reduce((sum, p) => sum + (p.commentsCount ?? 0), 0);
     const videoPosts = userPosts.filter(p => p.isVideo);
     const videoViews = videoPosts.reduce((sum, p) => sum + (p.videoViewCount ?? 0), 0);
     const reelsPercentage = userPosts.length > 0
