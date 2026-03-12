@@ -5,12 +5,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { generateOutreachMessage } from '@/lib/message-templates';
-import type { CandidateCard, Creator, CreatorScore, OutreachRecord } from '@/types';
+import type { CandidateCard } from '@/types';
 
 /**
  * GET /api/candidates
  * Fetch current batch of candidates from Supabase
- * Returns candidates with status 'presented' (pending review)
  */
 export async function GET() {
   try {
@@ -33,7 +32,7 @@ export async function GET() {
       });
     }
 
-    // Get outreach records for this batch that are 'presented' (pending review)
+    // Get outreach records for this batch
     const { data: outreachRecords, error: outreachError } = await supabase
       .from('outreach_records')
       .select('*')
@@ -50,7 +49,8 @@ export async function GET() {
     }
 
     // Get creator IDs from outreach records
-    const creatorIds = outreachRecords.map((o: OutreachRecord) => o.creator_id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const creatorIds = outreachRecords.map((o: any) => o.creator_id);
 
     // Fetch all creators
     const { data: creators } = await supabase
@@ -65,39 +65,41 @@ export async function GET() {
       .eq('batch_id', batch.id)
       .in('creator_id', creatorIds);
 
+    // Build lookup maps
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const creatorsMap = new Map((creators ?? []).map((c: any) => [c.id, c]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scoresMap = new Map((scores ?? []).map((s: any) => [s.creator_id, s]));
+
     // Build candidate cards
-    const creatorsMap = new Map((creators ?? []).map((c: Creator) => [c.id, c]));
-    const scoresMap = new Map((scores ?? []).map((s: CreatorScore) => [s.creator_id, s]));
+    const candidates: CandidateCard[] = [];
 
-    const candidates: CandidateCard[] = outreachRecords
-      .map((outreach: OutreachRecord, index: number) => {
-        const creator = creatorsMap.get(outreach.creator_id);
-        const score = scoresMap.get(outreach.creator_id);
-        if (!creator || !score) return null;
+    for (let i = 0; i < outreachRecords.length; i++) {
+      const outreach = outreachRecords[i];
+      const creator = creatorsMap.get(outreach.creator_id);
+      const score = scoresMap.get(outreach.creator_id);
+      if (!creator || !score) continue;
 
-        return {
-          creator,
-          score,
-          outreach,
-          example_reels: [],
-          top_hashtags: (creator.recent_hashtags ?? []).slice(0, 6),
-          rank: index + 1,
-        } as CandidateCard;
-      })
-      .filter(Boolean)
-      // Sort by score descending
-      .sort((a: CandidateCard, b: CandidateCard) =>
-        b.score.overall_score - a.score.overall_score
-      )
-      // Re-assign ranks after sorting
-      .map((c: CandidateCard, i: number) => ({ ...c, rank: i + 1 }));
+      candidates.push({
+        creator,
+        score,
+        outreach,
+        example_reels: [],
+        top_hashtags: (creator.recent_hashtags ?? []).slice(0, 6),
+        rank: i + 1,
+      });
+    }
+
+    // Sort by score descending and re-assign ranks
+    candidates.sort((a, b) => b.score.overall_score - a.score.overall_score);
+    candidates.forEach((c, i) => { c.rank = i + 1; });
 
     return NextResponse.json({
       candidates,
       has_batch: true,
       batch_id: batch.id,
       total: candidates.length,
-      pending: candidates.filter((c: CandidateCard) => c.outreach.status === 'presented').length,
+      pending: candidates.filter((c) => c.outreach.status === 'presented').length,
     });
   } catch (error) {
     console.error('[Candidates] Error:', error);
@@ -127,7 +129,6 @@ export async function PATCH(request: NextRequest) {
     const supabase = createServerClient();
 
     if (action === 'approve') {
-      // Update outreach status to 'approved'
       await supabase
         .from('outreach_records')
         .update({
@@ -146,8 +147,7 @@ export async function PATCH(request: NextRequest) {
           .single();
 
         if (creator) {
-          dmMessage = generateOutreachMessage(creator as Creator, 'Your Brand');
-          // Save the DM message
+          dmMessage = generateOutreachMessage(creator, 'Your Brand');
           await supabase
             .from('outreach_records')
             .update({
@@ -158,7 +158,6 @@ export async function PATCH(request: NextRequest) {
         }
       }
 
-      // Log activity
       await supabase.from('activity_log').insert({
         action: 'candidate_approved',
         details: { outreach_id, creator_id },
@@ -180,7 +179,6 @@ export async function PATCH(request: NextRequest) {
         })
         .eq('id', outreach_id);
 
-      // Log activity
       await supabase.from('activity_log').insert({
         action: 'candidate_skipped',
         details: { outreach_id, creator_id },
