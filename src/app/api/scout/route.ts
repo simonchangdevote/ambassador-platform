@@ -1,7 +1,6 @@
 // ============================================================
 // API: /api/scout — Trigger a weekly scouting run
-// Discovers, VERIFIES, scores, and presents top 10 creators
-// Uses REAL Apify API calls + Supabase storage
+// HARD FILTERS → then RANK by simplified 3-dimension score
 // ============================================================
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -16,32 +15,26 @@ import type { Creator } from '@/types';
 
 /**
  * POST /api/scout
- * Triggers a new weekly scouting batch:
- * 1. Searches Instagram hashtags for creators via Apify
- * 2. Aggregates posts into creator profiles
- * 3. Filters by criteria (followers, reels %, etc.)
- * 4. VERIFIES each profile actually exists on Instagram
- * 5. Deduplicates against existing creators in DB
- * 6. Scores each verified creator
- * 7. Creates weekly batch with top 10 candidates
+ * Pipeline:
+ * 1. Search Instagram hashtags → raw posts
+ * 2. Aggregate posts into creator profiles
+ * 3. Basic filter (remove duplicates, skip existing DB creators)
+ * 4. Verify each profile via Apify (get real data)
+ * 5. HARD FILTER: follower range
+ * 6. HARD FILTER: niche keywords (must match in hashtags or bio)
+ * 7. HARD FILTER: location tags (must match in hashtags or bio)
+ * 8. HARD FILTER: minimum reels count
+ * 9. Score & rank top 10
+ * 10. Save to Supabase
  */
 export async function POST() {
   try {
-    // Check for required API token
     const apifyToken = process.env.APIFY_API_TOKEN;
     if (!apifyToken) {
       return NextResponse.json(
         {
           success: false,
           error: 'APIFY_API_TOKEN not configured. Add it to your Vercel environment variables.',
-          setup_instructions: {
-            step1: 'Create an account at https://apify.com',
-            step2: 'Go to Settings > Integrations > API tokens',
-            step3: 'Copy your API token',
-            step4: 'In Vercel, go to Project Settings > Environment Variables',
-            step5: 'Add APIFY_API_TOKEN with your token value',
-            step6: 'Redeploy your project',
-          },
         },
         { status: 400 }
       );
@@ -49,24 +42,35 @@ export async function POST() {
 
     const supabase = createServerClient();
 
-    // ----- STEP 1: Get brand config -----
+    // ----- LOAD CONFIG -----
     const { data: brandConfig } = await supabase
       .from('brand_config')
       .select('*')
       .limit(1)
       .single();
 
-    const nicheHashtags = brandConfig?.niche_hashtags ?? [
+    const searchHashtags = brandConfig?.niche_hashtags ?? [
       'spearfishing', 'spearo', 'freediving', 'spearfishingaustralia',
       'australianspearfishing', 'catchandcook',
     ];
-    const keywords = brandConfig?.keywords ?? [
-      'spearfishing', 'freediving', 'ocean', 'diving', 'australia',
+    const nicheKeywords: string[] = brandConfig?.keywords ?? [
+      'spearfishing', 'spearo', 'freediving', 'spearfish',
+    ];
+    const locationTags: string[] = brandConfig?.required_hashtags ?? [
+      'australia', 'australian', 'cairns', 'qld', 'queensland',
     ];
     const minFollowers = brandConfig?.target_follower_min ?? 1000;
-    const maxFollowers = brandConfig?.target_follower_max ?? 100000;
+    const maxFollowers = brandConfig?.target_follower_max ?? 500000;
+    const minReels = brandConfig?.min_reels ?? 5;
 
-    // ----- STEP 2: Create a weekly batch -----
+    console.log(`[Scout] === CONFIG ===`);
+    console.log(`[Scout] Search hashtags: [${searchHashtags.join(', ')}]`);
+    console.log(`[Scout] Niche keywords: [${nicheKeywords.join(', ')}]`);
+    console.log(`[Scout] Location tags: [${locationTags.join(', ')}]`);
+    console.log(`[Scout] Followers: ${minFollowers}–${maxFollowers}`);
+    console.log(`[Scout] Min reels: ${minReels}`);
+
+    // ----- STEP 1: Create a weekly batch -----
     const now = new Date();
     const weekNumber = getWeekNumber(now);
     const year = now.getFullYear();
@@ -94,32 +98,30 @@ export async function POST() {
       );
     }
 
-    console.log(`[Scout] Created batch ${batch.id} for week ${weekNumber}/${year}`);
+    console.log(`[Scout] Created batch ${batch.id}`);
 
-    // ----- STEP 3: Scout Instagram via Apify -----
-    console.log(`[Scout] Searching hashtags: ${nicheHashtags.join(', ')}`);
-    const posts = await scoutByHashtags(nicheHashtags, 50);
+    // ----- STEP 2: Search Instagram via Apify -----
+    const posts = await scoutByHashtags(searchHashtags, 50);
     console.log(`[Scout] Found ${posts.length} total posts`);
 
     if (posts.length === 0) {
-      await supabase
-        .from('weekly_batches')
+      await supabase.from('weekly_batches')
         .update({ status: 'completed', candidates_found: 0 })
         .eq('id', batch.id);
 
       return NextResponse.json({
         success: true,
-        message: 'No posts found for the configured hashtags. Try adjusting your hashtags in Settings.',
+        message: 'No posts found for your search hashtags. Try adjusting them in Settings.',
         batch_id: batch.id,
         candidates_found: 0,
       });
     }
 
-    // ----- STEP 4: Aggregate into creator profiles -----
+    // ----- STEP 3: Aggregate into creator profiles -----
     const aggregated = aggregateCreatorProfiles(posts);
-    console.log(`[Scout] Aggregated into ${aggregated.length} unique creators`);
+    console.log(`[Scout] ${aggregated.length} unique creators`);
 
-    // ----- STEP 5: Get existing usernames to avoid duplicates -----
+    // ----- STEP 4: Skip existing DB creators -----
     const { data: existingCreators } = await supabase
       .from('creators')
       .select('instagram_username');
@@ -127,24 +129,20 @@ export async function POST() {
       (c: { instagram_username: string }) => c.instagram_username
     );
 
-    // ----- STEP 6: Filter by criteria -----
-    const filtered = filterCreators(aggregated, {
+    const fresh = filterCreators(aggregated, {
       minFollowers,
       maxFollowers,
-      minReelsPercentage: 15,
       excludeUsernames: existingUsernames,
     });
-    console.log(`[Scout] ${filtered.length} creators pass filters`);
+    console.log(`[Scout] ${fresh.length} new creators (after removing existing)`);
 
-    // ----- STEP 7: Verify each profile exists via Apify -----
-    await supabase
-      .from('weekly_batches')
+    // ----- STEP 5: Verify profiles via Apify -----
+    await supabase.from('weekly_batches')
       .update({ status: 'scoring' })
       .eq('id', batch.id);
 
     const verified: Creator[] = [];
-    // Limit verification to top 20 to save Apify credits
-    const toVerify = filtered.slice(0, 20);
+    const toVerify = fresh.slice(0, 20); // Limit to save Apify credits
 
     for (const candidate of toVerify) {
       if (!candidate.instagram_username) continue;
@@ -156,43 +154,114 @@ export async function POST() {
             ...result.creator,
             source_hashtags: candidate.source_hashtags,
           });
-          console.log(`[Scout] Verified: @${candidate.instagram_username} (${result.creator.followers_count} followers)`);
+          console.log(`[Scout] ✓ @${candidate.instagram_username} — ${result.creator.followers_count} followers, ${result.creator.posts_count} posts`);
         } else {
-          console.log(`[Scout] Skipped: @${candidate.instagram_username} — profile not found`);
+          console.log(`[Scout] ✗ @${candidate.instagram_username} — profile not found`);
         }
       } catch (err) {
-        console.error(`[Scout] Verification error for @${candidate.instagram_username}:`, err);
+        console.error(`[Scout] Error verifying @${candidate.instagram_username}:`, err);
       }
     }
-    console.log(`[Scout] ${verified.length} creators verified`);
+    console.log(`[Scout] ${verified.length} profiles verified`);
 
-    if (verified.length === 0) {
-      await supabase
-        .from('weekly_batches')
+    // ----- STEP 6: HARD FILTER — Follower range -----
+    let qualified = verified.filter(c => {
+      if (c.followers_count < minFollowers) {
+        console.log(`[Scout] FILTER: @${c.instagram_username} — ${c.followers_count} followers (below ${minFollowers})`);
+        return false;
+      }
+      if (c.followers_count > maxFollowers) {
+        console.log(`[Scout] FILTER: @${c.instagram_username} — ${c.followers_count} followers (above ${maxFollowers})`);
+        return false;
+      }
+      return true;
+    });
+    console.log(`[Scout] ${qualified.length} pass follower filter (${minFollowers}–${maxFollowers})`);
+
+    // ----- STEP 7: HARD FILTER — Niche keywords -----
+    if (nicheKeywords.length > 0) {
+      const nicheL = nicheKeywords.map(k => k.toLowerCase());
+      qualified = qualified.filter(c => {
+        const allTags = [
+          ...(c.recent_hashtags ?? []),
+          ...(c.source_hashtags ?? []),
+        ].map(h => h.toLowerCase().replace(/^#/, ''));
+        const bio = (c.bio ?? '').toLowerCase();
+
+        const matchesNiche = nicheL.some(kw =>
+          allTags.some(tag => tag.includes(kw)) || bio.includes(kw)
+        );
+
+        if (!matchesNiche) {
+          console.log(`[Scout] FILTER: @${c.instagram_username} — no niche keyword match`);
+        }
+        return matchesNiche;
+      });
+      console.log(`[Scout] ${qualified.length} pass niche filter [${nicheKeywords.join(', ')}]`);
+    }
+
+    // ----- STEP 8: HARD FILTER — Location tags -----
+    if (locationTags.length > 0) {
+      const locL = locationTags.map(t => t.toLowerCase());
+      qualified = qualified.filter(c => {
+        const allTags = [
+          ...(c.recent_hashtags ?? []),
+          ...(c.source_hashtags ?? []),
+        ].map(h => h.toLowerCase().replace(/^#/, ''));
+        const bio = (c.bio ?? '').toLowerCase();
+
+        const matchesLocation = locL.some(loc =>
+          allTags.some(tag => tag.includes(loc)) || bio.includes(loc)
+        );
+
+        if (!matchesLocation) {
+          console.log(`[Scout] FILTER: @${c.instagram_username} — no location tag match`);
+        }
+        return matchesLocation;
+      });
+      console.log(`[Scout] ${qualified.length} pass location filter [${locationTags.join(', ')}]`);
+    }
+
+    // ----- STEP 9: HARD FILTER — Minimum reels -----
+    if (minReels > 0) {
+      qualified = qualified.filter(c => {
+        // Use reels_percentage * posts_count to estimate reels count
+        const estimatedReels = Math.round(((c.reels_percentage ?? 0) / 100) * c.posts_count);
+        // If we don't have reels data, be lenient (don't filter out)
+        if (c.reels_percentage === undefined || c.reels_percentage === null) return true;
+        if (estimatedReels < minReels) {
+          console.log(`[Scout] FILTER: @${c.instagram_username} — ~${estimatedReels} reels (below ${minReels})`);
+          return false;
+        }
+        return true;
+      });
+      console.log(`[Scout] ${qualified.length} pass min reels filter (${minReels}+)`);
+    }
+
+    if (qualified.length === 0) {
+      await supabase.from('weekly_batches')
         .update({ status: 'completed', candidates_found: 0 })
         .eq('id', batch.id);
 
       return NextResponse.json({
         success: true,
-        message: 'No verified creators found in this scouting run. Try again or adjust criteria.',
+        message: `Found ${verified.length} creators but none passed all filters. Try relaxing your niche keywords, location tags, or follower range in Settings.`,
         batch_id: batch.id,
         candidates_found: 0,
       });
     }
 
-    // ----- STEP 8: Score each verified creator -----
-    const scored = verified.map(creator => ({
+    // ----- STEP 10: Score & rank -----
+    const scored = qualified.map(creator => ({
       creator,
-      score: calculateOverallScore(creator, nicheHashtags, keywords),
+      score: calculateOverallScore(creator),
     }));
 
-    // Sort by overall score and take top 10
     scored.sort((a, b) => b.score.overall_score - a.score.overall_score);
     const top10 = scored.slice(0, 10);
 
-    // ----- STEP 9: Save to Supabase -----
+    // ----- STEP 11: Save to Supabase -----
     for (const { creator, score } of top10) {
-      // Upsert creator
       const { data: savedCreator, error: creatorError } = await supabase
         .from('creators')
         .upsert(
@@ -223,13 +292,12 @@ export async function POST() {
         .single();
 
       if (creatorError) {
-        console.error(`[Scout] Error saving creator @${creator.instagram_username}:`, creatorError);
+        console.error(`[Scout] Error saving @${creator.instagram_username}:`, creatorError);
         continue;
       }
 
       const creatorId = savedCreator.id;
 
-      // Save score
       await supabase.from('creator_scores').insert({
         creator_id: creatorId,
         batch_id: batch.id,
@@ -242,7 +310,6 @@ export async function POST() {
         scored_at: new Date().toISOString(),
       });
 
-      // Create outreach record with 'presented' status
       await supabase.from('outreach_records').insert({
         creator_id: creatorId,
         batch_id: batch.id,
@@ -250,16 +317,11 @@ export async function POST() {
       });
     }
 
-    // ----- STEP 10: Update batch status -----
-    await supabase
-      .from('weekly_batches')
-      .update({
-        status: 'review',
-        candidates_found: top10.length,
-      })
+    // ----- STEP 12: Update batch -----
+    await supabase.from('weekly_batches')
+      .update({ status: 'review', candidates_found: top10.length })
       .eq('id', batch.id);
 
-    // Log activity
     await supabase.from('activity_log').insert({
       action: 'scouting_completed',
       details: {
@@ -267,11 +329,12 @@ export async function POST() {
         posts_found: posts.length,
         creators_aggregated: aggregated.length,
         creators_verified: verified.length,
+        pass_followers: qualified.length,
         top_candidates: top10.length,
       },
     });
 
-    console.log(`[Scout] Scouting complete! ${top10.length} candidates ready for review.`);
+    console.log(`[Scout] Done! ${top10.length} candidates ready for review.`);
 
     return NextResponse.json({
       success: true,
@@ -290,13 +353,9 @@ export async function POST() {
   }
 }
 
-/**
- * GET /api/scout — Get current scouting status
- */
 export async function GET() {
   try {
     const supabase = createServerClient();
-
     const { data: latestBatch } = await supabase
       .from('weekly_batches')
       .select('*')
@@ -320,7 +379,6 @@ export async function GET() {
   }
 }
 
-/** Get ISO week number */
 function getWeekNumber(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
