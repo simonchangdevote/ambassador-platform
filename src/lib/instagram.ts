@@ -308,7 +308,7 @@ export function filterCreators(
 ): Partial<Creator>[] {
   const {
     minFollowers = 1000,
-    maxFollowers = 100000,
+    maxFollowers = 500000,
     excludeUsernames = [],
   } = options;
 
