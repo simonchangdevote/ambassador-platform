@@ -1,5 +1,5 @@
 // ============================================================
-// SCORE BREAKDOWN — Visual breakdown of the 5 scoring dimensions
+// SCORE BREAKDOWN — Visual breakdown of 3 scoring dimensions
 // ============================================================
 
 import type { CreatorScore } from '@/types';
@@ -9,11 +9,9 @@ interface Props {
 }
 
 const DIMENSIONS = [
-  { key: 'content_quality_score', label: 'Content Quality', weight: '25%', description: 'Video quality, editing, visual storytelling' },
-  { key: 'engagement_score', label: 'Engagement', weight: '25%', description: 'Likes, comments, shares, engagement rate' },
-  { key: 'audience_size_score', label: 'Audience Size', weight: '15%', description: 'Follower count in ideal micro-to-mid range' },
-  { key: 'reels_focus_score', label: 'Reels Focus', weight: '20%', description: 'Frequency of reels/video posting' },
-  { key: 'brand_fit_score', label: 'Brand Fit', weight: '15%', description: 'Alignment with ocean/sport/outdoor culture' },
+  { key: 'engagement_score', label: 'Engagement Rate', weight: '40%', description: 'How engaged their audience is (likes, comments, shares)' },
+  { key: 'audience_size_score', label: 'Audience Size', weight: '30%', description: 'Follower count in the ideal micro-to-mid range (5K–50K sweet spot)' },
+  { key: 'reels_focus_score', label: 'Reels Activity', weight: '30%', description: 'How much video/reel content they produce' },
 ] as const;
 
 export default function ScoreBreakdown({ score }: Props) {
