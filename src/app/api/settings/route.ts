@@ -1,6 +1,6 @@
 // ============================================================
 // API: /api/settings — Read and update brand configuration
-// Connects the Settings page to Supabase brand_config table
+// Simplified: hard filters + outreach template, no scoring weights
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -20,7 +20,7 @@ export async function GET() {
       .single();
 
     if (error || !config) {
-      // Return defaults if no config exists yet
+      // Return sensible defaults if no config exists
       return NextResponse.json({
         config: {
           name: 'Your Brand',
@@ -28,18 +28,13 @@ export async function GET() {
             'spearfishing', 'spearo', 'freediving', 'spearfishingaustralia',
             'australianspearfishing', 'catchandcook',
           ],
-          keywords: ['spearfishing', 'freediving', 'ocean', 'diving', 'australia'],
+          required_hashtags: ['australia', 'australian', 'cairns', 'qld', 'queensland'],
+          keywords: ['spearfishing', 'spearo', 'freediving', 'spearfish'],
           target_follower_min: 1000,
           target_follower_max: 500000,
           target_engagement_min: 2.0,
+          min_reels: 5,
           outreach_message_template: '',
-          scoring_weights: {
-            content_quality: 0.25,
-            engagement: 0.25,
-            audience_size: 0.15,
-            reels_focus: 0.20,
-            brand_fit: 0.15,
-          },
         },
         is_default: true,
       });
@@ -74,23 +69,17 @@ export async function POST(request: NextRequest) {
     const configData = {
       name: body.name ?? 'Your Brand',
       niche_hashtags: body.niche_hashtags ?? [],
+      required_hashtags: body.required_hashtags ?? [],
       keywords: body.keywords ?? [],
       target_follower_min: body.target_follower_min ?? 1000,
       target_follower_max: body.target_follower_max ?? 500000,
       target_engagement_min: body.target_engagement_min ?? 2.0,
+      min_reels: body.min_reels ?? 5,
       outreach_message_template: body.outreach_message_template ?? '',
-      scoring_weights: body.scoring_weights ?? {
-        content_quality: 0.25,
-        engagement: 0.25,
-        audience_size: 0.15,
-        reels_focus: 0.20,
-        brand_fit: 0.15,
-      },
       updated_at: new Date().toISOString(),
     };
 
     if (existing) {
-      // Update existing config
       const { error } = await supabase
         .from('brand_config')
         .update(configData)
@@ -99,12 +88,11 @@ export async function POST(request: NextRequest) {
       if (error) {
         console.error('[Settings] Update error:', error);
         return NextResponse.json(
-          { error: 'Failed to update settings.' },
+          { error: 'Failed to update settings: ' + error.message },
           { status: 500 }
         );
       }
     } else {
-      // Insert new config
       const { error } = await supabase
         .from('brand_config')
         .insert(configData);
@@ -112,7 +100,7 @@ export async function POST(request: NextRequest) {
       if (error) {
         console.error('[Settings] Insert error:', error);
         return NextResponse.json(
-          { error: 'Failed to save settings.' },
+          { error: 'Failed to save settings: ' + error.message },
           { status: 500 }
         );
       }
