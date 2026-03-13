@@ -1,6 +1,6 @@
 // ============================================================
-// SETTINGS — Configure brand criteria, scoring weights, templates
-// Connected to Supabase via /api/settings
+// SETTINGS — Simplified: Hard Filters + Outreach Template
+// No scoring weight sliders — scoring uses fixed internal weights
 // ============================================================
 'use client';
 
@@ -9,26 +9,18 @@ import { getTemplateVariables } from '@/lib/message-templates';
 
 export default function SettingsPage() {
   const [brandName, setBrandName] = useState('Your Brand');
-  const [hashtags, setHashtags] = useState('');
-  const [keywords, setKeywords] = useState('');
+  const [searchHashtags, setSearchHashtags] = useState('');
+  const [nicheKeywords, setNicheKeywords] = useState('');
+  const [locationTags, setLocationTags] = useState('');
   const [minFollowers, setMinFollowers] = useState('1000');
   const [maxFollowers, setMaxFollowers] = useState('500000');
-  const [minEngagement, setMinEngagement] = useState('2.0');
+  const [minReels, setMinReels] = useState('5');
   const [messageTemplate, setMessageTemplate] = useState('');
-
-  const [weights, setWeights] = useState({
-    content_quality: 25,
-    engagement: 25,
-    audience_size: 15,
-    reels_focus: 20,
-    brand_fit: 15,
-  });
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
-  const totalWeight = Object.values(weights).reduce((sum, w) => sum + w, 0);
   const templateVars = getTemplateVariables();
 
   // Load settings from Supabase on mount
@@ -40,21 +32,13 @@ export default function SettingsPage() {
         if (data.config) {
           const c = data.config;
           setBrandName(c.name || 'Your Brand');
-          setHashtags((c.niche_hashtags || []).join(', '));
-          setKeywords((c.keywords || []).join(', '));
+          setSearchHashtags((c.niche_hashtags || []).join(', '));
+          setNicheKeywords((c.keywords || []).join(', '));
+          setLocationTags((c.required_hashtags || []).join(', '));
           setMinFollowers(String(c.target_follower_min || 1000));
           setMaxFollowers(String(c.target_follower_max || 500000));
-          setMinEngagement(String(c.target_engagement_min || 2.0));
+          setMinReels(String(c.min_reels || 5));
           setMessageTemplate(c.outreach_message_template || '');
-          if (c.scoring_weights) {
-            setWeights({
-              content_quality: Math.round((c.scoring_weights.content_quality || 0.25) * 100),
-              engagement: Math.round((c.scoring_weights.engagement || 0.25) * 100),
-              audience_size: Math.round((c.scoring_weights.audience_size || 0.15) * 100),
-              reels_focus: Math.round((c.scoring_weights.reels_focus || 0.20) * 100),
-              brand_fit: Math.round((c.scoring_weights.brand_fit || 0.15) * 100),
-            });
-          }
         }
       } catch (err) {
         console.error('Failed to load settings:', err);
@@ -66,13 +50,17 @@ export default function SettingsPage() {
   }, []);
 
   async function handleSave() {
-    if (totalWeight !== 100) {
-      setSaveMessage('Scoring weights must add up to 100%. Currently: ' + totalWeight + '%');
-      return;
-    }
-
     setIsSaving(true);
     setSaveMessage('');
+
+    // Basic validation
+    const min = parseInt(minFollowers) || 1000;
+    const max = parseInt(maxFollowers) || 500000;
+    if (min >= max) {
+      setSaveMessage('Min followers must be less than max followers.');
+      setIsSaving(false);
+      return;
+    }
 
     try {
       const res = await fetch('/api/settings', {
@@ -80,19 +68,13 @@ export default function SettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: brandName,
-          niche_hashtags: hashtags.split(',').map(h => h.trim()).filter(Boolean),
-          keywords: keywords.split(',').map(k => k.trim()).filter(Boolean),
-          target_follower_min: parseInt(minFollowers) || 1000,
-          target_follower_max: parseInt(maxFollowers) || 500000,
-          target_engagement_min: parseFloat(minEngagement) || 2.0,
+          niche_hashtags: searchHashtags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
+          keywords: nicheKeywords.split(',').map(k => k.trim()).filter(Boolean),
+          required_hashtags: locationTags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
+          target_follower_min: min,
+          target_follower_max: max,
+          min_reels: parseInt(minReels) || 5,
           outreach_message_template: messageTemplate,
-          scoring_weights: {
-            content_quality: weights.content_quality / 100,
-            engagement: weights.engagement / 100,
-            audience_size: weights.audience_size / 100,
-            reels_focus: weights.reels_focus / 100,
-            brand_fit: weights.brand_fit / 100,
-          },
         }),
       });
 
@@ -129,64 +111,75 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-500 mt-1">
-          Configure your scouting criteria, scoring weights, and outreach templates.
+          Configure what to search for, who qualifies, and how to reach out.
           Changes apply to the next scouting run.
         </p>
       </div>
 
       {/* Brand Info */}
-      <Section title="Brand Configuration">
+      <Section title="Brand" description="Your brand name (used in outreach messages).">
         <Field label="Brand Name" value={brandName} onChange={setBrandName} />
-        <Field label="Niche Hashtags (comma-separated)" value={hashtags} onChange={setHashtags}
-               hint="Hashtags to search when scouting Instagram. E.g.: spearfishing, spearo, freediving" />
-        <Field label="Keywords (comma-separated)" value={keywords} onChange={setKeywords}
-               hint="Keywords to match in creator bios for brand fit scoring" />
       </Section>
 
-      {/* Target Criteria */}
-      <Section title="Target Creator Criteria">
-        <div className="grid grid-cols-2 gap-4">
+      {/* What to Search */}
+      <Section title="Instagram Search" description="Hashtags the scout uses to find posts on Instagram. These are the 'fishing net' — cast wide.">
+        <Field
+          label="Search Hashtags"
+          value={searchHashtags}
+          onChange={setSearchHashtags}
+          hint="Comma-separated, no # needed. E.g.: spearfishing, spearo, freediving, spearfishingaustralia, catchandcook"
+        />
+      </Section>
+
+      {/* Hard Filters — Who Qualifies */}
+      <Section title="Creator Filters" description="Creators MUST pass ALL of these to appear as candidates. This is where you control quality.">
+        <Field
+          label="Niche Content Keywords"
+          value={nicheKeywords}
+          onChange={setNicheKeywords}
+          hint="Creator must have these in their hashtags or bio. E.g.: spearfishing, spearo, freediving, spearfish"
+        />
+        <Field
+          label="Location Tags"
+          value={locationTags}
+          onChange={setLocationTags}
+          hint="Creator must match at least one of these (in hashtags or bio). E.g.: australia, australian, cairns, qld, queensland"
+        />
+        <div className="grid grid-cols-3 gap-4">
           <Field label="Min Followers" value={minFollowers} onChange={setMinFollowers} type="number" />
           <Field label="Max Followers" value={maxFollowers} onChange={setMaxFollowers} type="number" />
+          <Field label="Min Reels" value={minReels} onChange={setMinReels} type="number"
+                 hint="Minimum reels on profile" />
         </div>
-        <Field label="Min Engagement Rate (%)" value={minEngagement} onChange={setMinEngagement} type="number" />
         <p className="text-xs text-gray-400 mt-1">
-          Current range: {parseInt(minFollowers).toLocaleString()} &ndash; {parseInt(maxFollowers).toLocaleString()} followers
+          Range: {parseInt(minFollowers).toLocaleString()} – {parseInt(maxFollowers).toLocaleString()} followers, at least {minReels} reels
         </p>
       </Section>
 
-      {/* Scoring Weights */}
-      <Section title="Scoring Weights">
-        <p className="text-sm text-gray-500 mb-4">
-          Adjust how much each dimension contributes to the overall Ambassador Score.
-          Total must equal 100%.
-        </p>
-        {Object.entries(weights).map(([key, value]) => (
-          <div key={key} className="flex items-center gap-4 mb-3">
-            <label className="w-40 text-sm text-gray-700 capitalize">
-              {key.replace(/_/g, ' ')}
-            </label>
-            <input
-              type="range"
-              min={0}
-              max={50}
-              value={value}
-              onChange={(e) => setWeights(prev => ({ ...prev, [key]: Number(e.target.value) }))}
-              className="flex-1"
-            />
-            <span className="w-12 text-sm font-medium text-right">{value}%</span>
+      {/* How scoring works — info only */}
+      <Section title="How Ranking Works" description="Creators who pass all filters above are ranked automatically by:">
+        <div className="space-y-2 text-sm text-gray-600">
+          <div className="flex items-center gap-3">
+            <span className="w-16 text-right font-semibold text-brand-600">40%</span>
+            <span>Engagement Rate — how engaged their audience is</span>
           </div>
-        ))}
-        <p className={`text-sm font-medium ${totalWeight === 100 ? 'text-emerald-600' : 'text-red-600'}`}>
-          Total: {totalWeight}% {totalWeight !== 100 && '(must equal 100%)'}
+          <div className="flex items-center gap-3">
+            <span className="w-16 text-right font-semibold text-brand-600">30%</span>
+            <span>Audience Size — sweet spot scoring (5K–50K ideal)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-16 text-right font-semibold text-brand-600">30%</span>
+            <span>Reels Activity — how much video content they produce</span>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          These weights are fixed and optimised for finding the best micro-influencer ambassadors.
+          The niche/location/follower filters above are what controls who gets through.
         </p>
       </Section>
 
       {/* Outreach Template */}
-      <Section title="Outreach Message Template">
-        <p className="text-sm text-gray-500 mb-3">
-          Customise the DM message sent to approved creators. Use variables below:
-        </p>
+      <Section title="Outreach Message" description="DM template for approved creators. Variables get replaced automatically.">
         <div className="flex flex-wrap gap-2 mb-3">
           {templateVars.map(v => (
             <span key={v.key} className="px-2 py-1 bg-brand-50 text-brand-700 text-xs
@@ -199,7 +192,7 @@ export default function SettingsPage() {
           value={messageTemplate}
           onChange={(e) => setMessageTemplate(e.target.value)}
           rows={8}
-          placeholder="Hey {{first_name}}! We've been checking out your content and love what you're doing..."
+          placeholder="Hey {{first_name}}! We've been checking out your spearfishing content and love what you're doing..."
           className="w-full px-4 py-3 text-sm border border-gray-200 rounded-lg
                      focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
         />
@@ -220,7 +213,7 @@ export default function SettingsPage() {
       <div className="mt-8 flex justify-end">
         <button
           onClick={handleSave}
-          disabled={isSaving || totalWeight !== 100}
+          disabled={isSaving}
           className="px-6 py-2.5 bg-brand-600 text-white font-medium rounded-lg
                      hover:bg-brand-700 transition-colors disabled:opacity-50
                      disabled:cursor-not-allowed flex items-center gap-2"
@@ -244,10 +237,14 @@ export default function SettingsPage() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, description, children }: {
+  title: string; description?: string; children: React.ReactNode;
+}) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-      <h2 className="text-lg font-semibold text-gray-800 mb-4">{title}</h2>
+      <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
+      {description && <p className="text-sm text-gray-500 mt-1 mb-4">{description}</p>}
+      {!description && <div className="mb-4" />}
       {children}
     </div>
   );
