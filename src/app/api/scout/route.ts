@@ -136,13 +136,36 @@ export async function POST() {
     });
     console.log(`[Scout] ${fresh.length} new creators (after removing existing)`);
 
+    // ----- STEP 4b: PRE-SORT — Prioritise creators found via location-specific hashtags -----
+    // This ensures we don't waste Apify credits verifying creators from other countries
+    const allLocationKeywords = [...locationTags, ...nicheKeywords].map(k => k.toLowerCase());
+    const sorted = [...fresh].sort((a, b) => {
+      const aSourceTags = (a.source_hashtags ?? []).map(h => h.toLowerCase());
+      const bSourceTags = (b.source_hashtags ?? []).map(h => h.toLowerCase());
+      const aCaptions = (a.recent_captions ?? []).join(' ').toLowerCase();
+      const bCaptions = (b.recent_captions ?? []).join(' ').toLowerCase();
+
+      // Count how many location keywords appear in source hashtags + captions
+      const aScore = allLocationKeywords.filter(kw =>
+        aSourceTags.some(t => t.includes(kw)) || aCaptions.includes(kw)
+      ).length;
+      const bScore = allLocationKeywords.filter(kw =>
+        bSourceTags.some(t => t.includes(kw)) || bCaptions.includes(kw)
+      ).length;
+
+      return bScore - aScore; // Higher match count first
+    });
+
+    const topCreators = sorted.slice(0, 5);
+    console.log(`[Scout] Top 5 prioritised creators: ${topCreators.map(c => `@${c.instagram_username} (source: ${(c.source_hashtags ?? []).join(', ')})`).join(' | ')}`);
+
     // ----- STEP 5: Verify profiles via Apify -----
     await supabase.from('weekly_batches')
       .update({ status: 'scoring' })
       .eq('id', batch.id);
 
     const verified: Creator[] = [];
-    const toVerify = fresh.slice(0, 20); // Limit to save Apify credits
+    const toVerify = sorted.slice(0, 20); // Limit to save Apify credits, best candidates first
 
     for (const candidate of toVerify) {
       if (!candidate.instagram_username) continue;
@@ -179,6 +202,7 @@ export async function POST() {
     console.log(`[Scout] ${qualified.length} pass follower filter (${minFollowers}–${maxFollowers})`);
 
     // ----- STEP 7: HARD FILTER — Niche keywords -----
+    // Checks: hashtags + bio + post captions
     if (nicheKeywords.length > 0) {
       const nicheL = nicheKeywords.map(k => k.toLowerCase());
       qualified = qualified.filter(c => {
@@ -187,20 +211,22 @@ export async function POST() {
           ...(c.source_hashtags ?? []),
         ].map(h => h.toLowerCase().replace(/^#/, ''));
         const bio = (c.bio ?? '').toLowerCase();
+        const captionText = (c.recent_captions ?? []).join(' ').toLowerCase();
 
         const matchesNiche = nicheL.some(kw =>
-          allTags.some(tag => tag.includes(kw)) || bio.includes(kw)
+          allTags.some(tag => tag.includes(kw)) || bio.includes(kw) || captionText.includes(kw)
         );
 
         if (!matchesNiche) {
-          console.log(`[Scout] FILTER: @${c.instagram_username} — no niche keyword match`);
+          console.log(`[Scout] FILTER: @${c.instagram_username} — no niche keyword match in hashtags/bio/captions`);
         }
         return matchesNiche;
       });
       console.log(`[Scout] ${qualified.length} pass niche filter [${nicheKeywords.join(', ')}]`);
     }
 
-    // ----- STEP 8: HARD FILTER — Location tags -----
+    // ----- STEP 8: HARD FILTER — Location keywords -----
+    // Checks: hashtags + bio + post captions (many creators mention location in captions, not hashtags)
     if (locationTags.length > 0) {
       const locL = locationTags.map(t => t.toLowerCase());
       qualified = qualified.filter(c => {
@@ -209,13 +235,14 @@ export async function POST() {
           ...(c.source_hashtags ?? []),
         ].map(h => h.toLowerCase().replace(/^#/, ''));
         const bio = (c.bio ?? '').toLowerCase();
+        const captionText = (c.recent_captions ?? []).join(' ').toLowerCase();
 
         const matchesLocation = locL.some(loc =>
-          allTags.some(tag => tag.includes(loc)) || bio.includes(loc)
+          allTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
         );
 
         if (!matchesLocation) {
-          console.log(`[Scout] FILTER: @${c.instagram_username} — no location tag match`);
+          console.log(`[Scout] FILTER: @${c.instagram_username} — no location match in hashtags/bio/captions`);
         }
         return matchesLocation;
       });
