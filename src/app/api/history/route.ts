@@ -8,8 +8,25 @@ export async function GET() {
   try {
     const supabase = createServerClient();
 
-    // Fetch all outreach records that have been acted on (not just 'presented')
-    // NOTE: creator_scores has no direct FK from outreach_records, so we query it separately
+    // First, do a simple count to check how many acted-on records exist
+    const { data: countCheck, error: countError } = await supabase
+      .from('outreach_records')
+      .select('id, status, creator_id')
+      .in('status', ['approved', 'skipped', 'dm_drafted', 'dm_sent', 'replied', 'interested', 'declined', 'no_response', 'onboarded']);
+
+    console.log('[History] Records with acted-on status:', countCheck?.length ?? 0);
+    if (countCheck && countCheck.length > 0) {
+      console.log('[History] Status breakdown:', countCheck.reduce((acc: Record<string, number>, r) => {
+        acc[r.status as string] = (acc[r.status as string] || 0) + 1;
+        return acc;
+      }, {}));
+    }
+
+    if (countError) {
+      console.error('[History] Count check error:', countError);
+    }
+
+    // Fetch all outreach records that have been acted on
     const { data: records, error } = await supabase
       .from('outreach_records')
       .select(`
@@ -47,19 +64,25 @@ export async function GET() {
 
     if (error) {
       console.error('[History] Query error:', error);
-      return NextResponse.json({ error: 'Failed to load history.' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to load history.', debug: error.message }, { status: 500 });
     }
 
+    console.log('[History] Records with joins:', records?.length ?? 0);
+
     if (!records || records.length === 0) {
-      return NextResponse.json({ history: [], total: 0 });
+      return NextResponse.json({ history: [], total: 0, debug: 'No records found with acted-on statuses' });
     }
+
+    // Log how many have null creator joins
+    const nullCreators = records.filter((r: Record<string, unknown>) => !r.creators).length;
+    console.log('[History] Records with null creator join:', nullCreators, 'of', records.length);
 
     // Collect creator_id + batch_id pairs to fetch scores separately
     const creatorIds = [...new Set(records.map((r: Record<string, unknown>) => r.creator_id as string))];
     const batchIds = [...new Set(records.map((r: Record<string, unknown>) => r.batch_id as string).filter(Boolean))];
 
     // Fetch scores separately (no direct FK from outreach_records to creator_scores)
-    let scoresMap = new Map<string, Record<string, unknown>>();
+    const scoresMap = new Map<string, Record<string, unknown>>();
     if (creatorIds.length > 0 && batchIds.length > 0) {
       const { data: scores } = await supabase
         .from('creator_scores')
@@ -69,7 +92,6 @@ export async function GET() {
 
       if (scores) {
         for (const s of scores) {
-          // Key by creator_id + batch_id so we match the right score to the right outreach record
           const key = `${s.creator_id}_${s.batch_id}`;
           scoresMap.set(key, s as Record<string, unknown>);
         }
@@ -106,6 +128,8 @@ export async function GET() {
         score: score ? (score.overall_score as number) : 0,
       };
     }).filter((h: { creator: unknown }) => h.creator !== null);
+
+    console.log('[History] Final history items after filtering null creators:', history.length);
 
     return NextResponse.json({ history, total: history.length });
   } catch (error) {
