@@ -73,10 +73,10 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchDashboard = useCallback(async () => {
-    setIsLoading(true);
+  const fetchDashboard = useCallback(async (showLoading = false) => {
+    if (showLoading) setIsLoading(true);
     try {
-      const res = await fetch('/api/dashboard');
+      const res = await fetch('/api/dashboard', { cache: 'no-store' });
       const data = await res.json();
 
       if (data.error) {
@@ -96,7 +96,23 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    fetchDashboard();
+    fetchDashboard(true);
+
+    // Re-fetch whenever the user navigates back to this tab/page
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchDashboard();
+      }
+    };
+    const handleFocus = () => fetchDashboard();
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [fetchDashboard]);
 
   function timeAgo(dateStr: string): string {
