@@ -58,7 +58,7 @@ export default function HistoryPage() {
   useEffect(() => {
     async function loadHistory() {
       try {
-        const res = await fetch('/api/history');
+        const res = await fetch(`/api/history?_t=${Date.now()}`, { cache: 'no-store' });
         const data = await res.json();
         if (data.history) {
           setHistory(data.history);
