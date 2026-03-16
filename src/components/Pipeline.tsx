@@ -1,22 +1,39 @@
 // ============================================================
-// PIPELINE — Visual funnel of the outreach pipeline
+// PIPELINE — Visual funnel of the outreach pipeline (receives data via props)
 // ============================================================
 
-const STAGES = [
-  { label: 'Discovered', count: 47, color: 'bg-gray-400', width: '100%' },
-  { label: 'Scored & Presented', count: 40, color: 'bg-brand-400', width: '85%' },
-  { label: 'Approved', count: 18, color: 'bg-blue-500', width: '38%' },
-  { label: 'DM Sent', count: 14, color: 'bg-purple-500', width: '30%' },
-  { label: 'Replied', count: 8, color: 'bg-amber-500', width: '17%' },
-  { label: 'Interested', count: 6, color: 'bg-emerald-500', width: '13%' },
-  { label: 'Onboarded', count: 3, color: 'bg-ocean-500', width: '6%' },
-];
+interface PipelineStage {
+  label: string;
+  count: number;
+  color: string;
+  percent: number;
+}
 
-export default function Pipeline() {
+interface Props {
+  stages: PipelineStage[];
+  isLoading: boolean;
+}
+
+export default function Pipeline({ stages, isLoading }: Props) {
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="space-y-3">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-4 animate-pulse">
+              <div className="w-40 h-4 bg-gray-200 rounded flex-shrink-0 ml-auto" />
+              <div className="flex-1 h-8 bg-gray-100 rounded-lg" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6">
       <div className="space-y-3">
-        {STAGES.map(stage => (
+        {stages.map(stage => (
           <div key={stage.label} className="flex items-center gap-4">
             <div className="w-40 text-sm text-gray-600 text-right flex-shrink-0">
               {stage.label}
@@ -25,9 +42,11 @@ export default function Pipeline() {
               <div
                 className={`h-full ${stage.color} rounded-lg transition-all duration-700
                            flex items-center justify-end pr-3`}
-                style={{ width: stage.width }}
+                style={{ width: `${Math.max(stage.percent, stage.count > 0 ? 8 : 0)}%` }}
               >
-                <span className="text-white text-xs font-bold">{stage.count}</span>
+                {stage.count > 0 && (
+                  <span className="text-white text-xs font-bold">{stage.count}</span>
+                )}
               </div>
             </div>
           </div>
