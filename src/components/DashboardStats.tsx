@@ -1,5 +1,6 @@
 // ============================================================
 // DASHBOARD STATS — Key metrics overview (receives data via props)
+// Supports variable number of stat cards
 // ============================================================
 
 interface Stat {
@@ -17,8 +18,8 @@ interface Props {
 export default function DashboardStats({ stats, isLoading }: Props) {
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {Array.from({ length: 9 }).map((_, i) => (
           <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
             <div className="h-3 bg-gray-200 rounded w-16 mb-2" />
             <div className="h-7 bg-gray-200 rounded w-10 mb-1" />
@@ -29,9 +30,13 @@ export default function DashboardStats({ stats, isLoading }: Props) {
     );
   }
 
+  // Only show cards that have a value > 0, except always show Scouted, Approved, and the first few
+  const alwaysShow = ['Scouted', 'Approved', 'DM Drafted', 'DM Sent'];
+  const visibleStats = stats.filter(s => alwaysShow.includes(s.label) || s.value > 0);
+
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      {stats.map(stat => (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      {visibleStats.map(stat => (
         <div
           key={stat.label}
           className="bg-white rounded-xl border border-gray-200 p-4"
