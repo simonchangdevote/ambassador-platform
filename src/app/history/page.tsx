@@ -1,6 +1,7 @@
 // ============================================================
 // HISTORY & ARCHIVE — View all reviewed creators from Supabase
-// Shows: approved, skipped, DM sent, onboarded, etc.
+// Filters by current status: All, Reached Out, Skipped, Declined
+// Counts are exclusive — based on each creator's current status
 // ============================================================
 'use client';
 
@@ -28,7 +29,7 @@ interface HistoryItem {
 const STATUS_COLORS: Record<string, string> = {
   approved: 'bg-blue-100 text-blue-700',
   skipped: 'bg-gray-100 text-gray-600',
-  dm_drafted: 'bg-purple-100 text-purple-700',
+  dm_drafted: 'bg-indigo-100 text-indigo-700',
   dm_sent: 'bg-purple-100 text-purple-700',
   replied: 'bg-amber-100 text-amber-700',
   interested: 'bg-emerald-100 text-emerald-700',
@@ -40,7 +41,7 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   approved: 'Approved',
   skipped: 'Skipped',
-  dm_drafted: 'DM Ready',
+  dm_drafted: 'DM Drafted',
   dm_sent: 'DM Sent',
   replied: 'Replied',
   interested: 'Interested',
@@ -49,10 +50,15 @@ const STATUS_LABELS: Record<string, string> = {
   onboarded: 'Onboarded',
 };
 
+// "Reached Out" = all pipeline statuses (approved through onboarded, excluding declined)
+const REACHED_OUT_STATUSES = ['approved', 'dm_drafted', 'dm_sent', 'replied', 'interested', 'no_response', 'onboarded'];
+
+type FilterType = 'all' | 'reached_out' | 'skipped' | 'declined';
+
 export default function HistoryPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'reached_out' | 'skipped'>('all');
+  const [filter, setFilter] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -72,15 +78,29 @@ export default function HistoryPage() {
     loadHistory();
   }, []);
 
+  // Filter by current status (exclusive)
   const filtered = history.filter(item => {
-    if (filter === 'reached_out' && item.status === 'skipped') return false;
-    if (filter === 'skipped' && item.status !== 'skipped') return false;
+    // Search filter
     if (searchQuery && !item.creator.username.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
+
+    // Status filter — based on CURRENT status
+    if (filter === 'reached_out') return REACHED_OUT_STATUSES.includes(item.status);
+    if (filter === 'skipped') return item.status === 'skipped';
+    if (filter === 'declined') return item.status === 'declined';
+    return true; // 'all'
   });
 
-  const approvedCount = history.filter(h => h.status !== 'skipped').length;
+  // Counts based on current status (exclusive)
+  const reachedOutCount = history.filter(h => REACHED_OUT_STATUSES.includes(h.status)).length;
   const skippedCount = history.filter(h => h.status === 'skipped').length;
+  const declinedCount = history.filter(h => h.status === 'declined').length;
+
+  const filterButtons: { key: FilterType; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: history.length },
+    { key: 'reached_out', label: 'Reached Out', count: reachedOutCount },
+    { key: 'skipped', label: 'Skipped', count: skippedCount },
+    { key: 'declined', label: 'Declined', count: declinedCount },
+  ];
 
   if (isLoading) {
     return (
@@ -103,7 +123,7 @@ export default function HistoryPage() {
         <h1 className="text-2xl font-bold text-gray-900">History &amp; Archive</h1>
         <p className="text-gray-500 mt-1">
           {history.length > 0
-            ? `${history.length} creators reviewed — ${approvedCount} reached out, ${skippedCount} skipped.`
+            ? `${history.length} creators reviewed — ${reachedOutCount} reached out, ${skippedCount} skipped${declinedCount > 0 ? `, ${declinedCount} declined` : ''}.`
             : 'No reviewed creators yet. Approve or skip candidates to see them here.'}
         </p>
       </div>
@@ -111,16 +131,18 @@ export default function HistoryPage() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4 mb-6">
         <div className="flex gap-2">
-          {(['all', 'reached_out', 'skipped'] as const).map(f => (
+          {filterButtons.map(f => (
             <button
-              key={f}
-              onClick={() => setFilter(f)}
+              key={f.key}
+              onClick={() => setFilter(f.key)}
               className={`px-4 py-2 text-sm rounded-lg transition-colors
-                ${filter === f
-                  ? 'bg-gray-900 text-white'
+                ${filter === f.key
+                  ? f.key === 'declined'
+                    ? 'bg-red-600 text-white'
+                    : 'bg-gray-900 text-white'
                   : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
             >
-              {f === 'all' ? `All (${history.length})` : f === 'reached_out' ? `Reached Out (${approvedCount})` : `Skipped (${skippedCount})`}
+              {f.label} ({f.count})
             </button>
           ))}
         </div>
@@ -149,7 +171,7 @@ export default function HistoryPage() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filtered.map(item => (
-              <tr key={item.outreach_id} className="hover:bg-gray-50">
+              <tr key={item.outreach_id} className={`hover:bg-gray-50 ${item.status === 'declined' ? 'opacity-60' : ''}`}>
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-2">
                     <div className="font-medium text-gray-900">
