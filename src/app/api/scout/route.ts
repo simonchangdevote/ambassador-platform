@@ -81,7 +81,7 @@ export async function POST() {
     }
 
     // ----- STEP 2: Search Instagram via Apify -----
-    const posts = await scoutByHashtags(searchHashtags, 50);
+    const posts = await scoutByHashtags(searchHashtags, 200);
     console.log(`[Scout] Found ${posts.length} total posts`);
 
     if (posts.length === 0) {
