@@ -1,5 +1,6 @@
 // ============================================================
 // API: /api/dashboard — Aggregate stats for the dashboard
+// Only counts meaningful statuses and deduplicates by creator
 // ============================================================
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -8,10 +9,24 @@ export async function GET() {
   try {
     const supabase = createServerClient();
 
-    // Fetch ALL outreach records with their status
+    // Get the latest active batch (same logic as candidates page)
+    const { data: activeBatch } = await supabase
+      .from('weekly_batches')
+      .select('id')
+      .in('status', ['review', 'scoring'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    // Fetch ALL outreach records that have reached at least 'presented' status
+    // (skip 'discovered' and 'scored' which are intermediate/incomplete)
     const { data: records, error } = await supabase
       .from('outreach_records')
-      .select('id, status, creator_id, batch_id, created_at, updated_at');
+      .select('id, status, creator_id, batch_id, created_at, updated_at')
+      .in('status', [
+        'presented', 'approved', 'skipped', 'dm_drafted', 'dm_sent',
+        'replied', 'interested', 'declined', 'no_response', 'onboarded',
+      ]);
 
     if (error) {
       console.error('[Dashboard] Query error:', error);
@@ -20,16 +35,40 @@ export async function GET() {
 
     const allRecords = records ?? [];
 
-    // Count by status
-    const statusCounts: Record<string, number> = {};
+    // Deduplicate: keep only the latest record per creator (a creator may appear in multiple batches)
+    const creatorLatest = new Map<string, { status: string; batch_id: string; updated_at: string }>();
     for (const r of allRecords) {
-      const status = r.status as string;
-      statusCounts[status] = (statusCounts[status] || 0) + 1;
+      const cid = r.creator_id as string;
+      const existing = creatorLatest.get(cid);
+      if (!existing || new Date(r.updated_at as string) > new Date(existing.updated_at)) {
+        creatorLatest.set(cid, {
+          status: r.status as string,
+          batch_id: r.batch_id as string,
+          updated_at: r.updated_at as string,
+        });
+      }
     }
 
-    // Calculate pipeline numbers
-    const discovered = allRecords.length;
-    const presented = statusCounts['presented'] || 0;
+    // Count unique creators by their latest status
+    const statusCounts: Record<string, number> = {};
+    for (const [, record] of creatorLatest) {
+      statusCounts[record.status] = (statusCounts[record.status] || 0) + 1;
+    }
+
+    // "Pending review" = presented creators in the ACTIVE batch only
+    let pendingReview = 0;
+    if (activeBatch) {
+      for (const [, record] of creatorLatest) {
+        if (record.status === 'presented' && record.batch_id === activeBatch.id) {
+          pendingReview++;
+        }
+      }
+    }
+
+    // Total unique creators ever scouted
+    const totalCreators = creatorLatest.size;
+
+    // Pipeline numbers
     const approved = (statusCounts['approved'] || 0) + (statusCounts['dm_drafted'] || 0);
     const dmSent = statusCounts['dm_sent'] || 0;
     const replied = statusCounts['replied'] || 0;
@@ -39,13 +78,14 @@ export async function GET() {
     const onboarded = statusCounts['onboarded'] || 0;
     const skipped = statusCounts['skipped'] || 0;
 
-    // Total that have been reviewed (approved + skipped)
-    const reviewed = approved + skipped + dmSent + replied + interested + declined + noResponse + onboarded;
+    // Reviewed = anyone you clicked approve or skip on
+    const totalApproved = approved + dmSent + replied + interested + declined + noResponse + onboarded;
+    const reviewed = totalApproved + skipped;
 
     // Calculate rates
-    const approvalRate = reviewed > 0 ? Math.round((approved + dmSent + replied + interested + onboarded) / reviewed * 100) : 0;
+    const approvalRate = reviewed > 0 ? Math.round(totalApproved / reviewed * 100) : 0;
     const dmSentTotal = dmSent + replied + interested + declined + noResponse + onboarded;
-    const sendRate = approved + dmSentTotal > 0 ? Math.round(dmSentTotal / (approved + dmSentTotal) * 100) : 0;
+    const sendRate = totalApproved > 0 ? Math.round(dmSentTotal / totalApproved * 100) : 0;
     const replyTotal = replied + interested + declined + onboarded;
     const responseRate = dmSentTotal > 0 ? Math.round(replyTotal / dmSentTotal * 100) : 0;
     const interestRate = replyTotal > 0 ? Math.round((interested + onboarded) / replyTotal * 100) : 0;
@@ -53,14 +93,14 @@ export async function GET() {
     // Stats for the cards
     const stats = [
       {
-        label: 'Discovered',
-        value: discovered,
-        change: `${presented} pending review`,
+        label: 'Scouted',
+        value: totalCreators,
+        change: pendingReview > 0 ? `${pendingReview} pending review` : 'All reviewed',
         color: 'text-gray-900',
       },
       {
         label: 'Approved',
-        value: approved + dmSentTotal,
+        value: totalApproved,
         change: reviewed > 0 ? `${approvalRate}% approval rate` : 'No reviews yet',
         color: 'text-blue-600',
       },
@@ -85,27 +125,27 @@ export async function GET() {
       {
         label: 'Onboarded',
         value: onboarded,
-        change: onboarded > 0 ? `${Math.round(onboarded / discovered * 100)}% conversion` : 'None yet',
+        change: onboarded > 0 ? `${Math.round(onboarded / totalCreators * 100)}% conversion` : 'None yet',
         color: 'text-ocean-600',
       },
     ];
 
     // Pipeline funnel data
-    const maxCount = Math.max(discovered, 1);
+    const maxCount = Math.max(totalCreators, 1);
     const pipeline = [
-      { label: 'Discovered', count: discovered, color: 'bg-gray-400', percent: 100 },
-      { label: 'Presented', count: presented + reviewed, color: 'bg-brand-400', percent: Math.round((presented + reviewed) / maxCount * 100) },
-      { label: 'Approved', count: approved + dmSentTotal, color: 'bg-blue-500', percent: Math.round((approved + dmSentTotal) / maxCount * 100) },
+      { label: 'Scouted', count: totalCreators, color: 'bg-gray-400', percent: 100 },
+      { label: 'Reviewed', count: reviewed, color: 'bg-brand-400', percent: Math.round(reviewed / maxCount * 100) },
+      { label: 'Approved', count: totalApproved, color: 'bg-blue-500', percent: Math.round(totalApproved / maxCount * 100) },
       { label: 'DM Sent', count: dmSentTotal, color: 'bg-purple-500', percent: Math.round(dmSentTotal / maxCount * 100) },
       { label: 'Replied', count: replyTotal, color: 'bg-amber-500', percent: Math.round(replyTotal / maxCount * 100) },
       { label: 'Interested', count: interested + onboarded, color: 'bg-emerald-500', percent: Math.round((interested + onboarded) / maxCount * 100) },
       { label: 'Onboarded', count: onboarded, color: 'bg-ocean-500', percent: Math.round(onboarded / maxCount * 100) },
     ];
 
-    // Recent activity (last 5 actions)
+    // Recent activity (last 5 actions, excluding stale 'presented')
     const recentRecords = allRecords
-      .filter(r => r.status !== 'discovered' && r.status !== 'scored')
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .filter(r => !['presented', 'discovered', 'scored'].includes(r.status as string))
+      .sort((a, b) => new Date(b.updated_at as string).getTime() - new Date(a.updated_at as string).getTime())
       .slice(0, 5);
 
     // Fetch creator names for recent activity
@@ -115,7 +155,7 @@ export async function GET() {
       const { data: creators } = await supabase
         .from('creators')
         .select('id, instagram_username')
-        .in('id', creatorIds);
+        .in('id', creatorIds as string[]);
 
       const creatorMap = new Map((creators ?? []).map((c: { id: string; instagram_username: string }) => [c.id, c.instagram_username]));
 
@@ -131,9 +171,9 @@ export async function GET() {
       pipeline,
       recentActivity,
       summary: {
-        discovered,
-        presented,
-        approved,
+        totalCreators,
+        pendingReview,
+        approved: totalApproved,
         skipped,
         dmSent: dmSentTotal,
         replied: replyTotal,
