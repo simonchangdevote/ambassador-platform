@@ -148,6 +148,10 @@ export async function fetchCreatorProfile(username: string): Promise<Creator | n
     const avgReelViews = videoPosts.length > 0 ? Math.round(videoViews / videoPosts.length) : 0;
 
     const allHashtags = [...new Set(latestPosts.flatMap(post => post.hashtags ?? []))];
+    const allCaptions = latestPosts
+      .map(post => post.caption ?? '')
+      .filter(c => c.length > 0)
+      .slice(0, 12); // Keep last 12 captions for keyword matching
 
     return {
       id: '',
@@ -165,6 +169,7 @@ export async function fetchCreatorProfile(username: string): Promise<Creator | n
       avg_reel_views: avgReelViews,
       reels_percentage: Math.round(reelsPercentage * 100) / 100,
       recent_hashtags: allHashtags.slice(0, 30),
+      recent_captions: allCaptions,
       instagram_url: `https://www.instagram.com/${p.username}/`,
       is_profile_verified: true,
       verified_at: new Date().toISOString(),
@@ -252,6 +257,10 @@ export function aggregateCreatorProfiles(
       : 0;
 
     const allHashtags = [...new Set(userPosts.flatMap(p => p.hashtags ?? []))];
+    const allCaptions = userPosts
+      .map(p => p.caption ?? '')
+      .filter(c => c.length > 0)
+      .slice(0, 12);
     const avgReelViews = videoPosts.length > 0 ? Math.round(videoViews / videoPosts.length) : 0;
 
     creators.push({
@@ -261,13 +270,10 @@ export function aggregateCreatorProfiles(
       reels_percentage: Math.round(reelsPercentage * 100) / 100,
       avg_reel_views: avgReelViews,
       recent_hashtags: allHashtags.slice(0, 30),
+      recent_captions: allCaptions,
       instagram_url: `https://www.instagram.com/${username}/`,
       is_profile_verified: false,
-      source_hashtags: allHashtags.filter(h =>
-        ['spearfishing', 'spearo', 'freediving', 'australia'].some(
-          nh => h.toLowerCase().includes(nh)
-        )
-      ),
+      source_hashtags: allHashtags, // Keep all source hashtags for filter matching
     });
   }
 
