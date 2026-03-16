@@ -46,7 +46,7 @@ export default function OutreachPage() {
     setIsLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/outreach');
+      const res = await fetch(`/api/outreach?_t=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
 
       if (data.error) {
@@ -69,20 +69,7 @@ export default function OutreachPage() {
   const filtered = filter === 'all' ? items : items.filter(i => i.status === filter);
 
   async function updateStatus(id: string, newStatus: OutreachStatus) {
-    // Optimistic UI update
-    setItems(prev =>
-      prev.map(item =>
-        item.id === id
-          ? {
-              ...item,
-              status: newStatus,
-              dmSentAt: newStatus === 'dm_sent' ? new Date().toISOString() : item.dmSentAt,
-            }
-          : item
-      )
-    );
-
-    // Save to Supabase
+    // Save to Supabase first, then update UI on success
     try {
       const res = await fetch('/api/outreach', {
         method: 'PATCH',
@@ -94,12 +81,28 @@ export default function OutreachPage() {
       });
       const data = await res.json();
 
-      if (!data.success) {
-        // Revert on failure
+      if (data.success) {
+        // Update local state only after confirmed save
+        setItems(prev =>
+          prev.map(item =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: newStatus,
+                  dmSentAt: newStatus === 'dm_sent' ? new Date().toISOString() : item.dmSentAt,
+                }
+              : item
+          )
+        );
+      } else {
+        console.error('[Outreach] Save failed:', data);
+        alert('Failed to update status. Please try again.');
+        // Re-fetch to show actual DB state
         fetchOutreach();
       }
-    } catch {
-      // Revert on error
+    } catch (err) {
+      console.error('[Outreach] Save error:', err);
+      alert('Failed to update status. Please try again.');
       fetchOutreach();
     }
   }
