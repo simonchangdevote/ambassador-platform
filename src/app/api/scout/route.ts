@@ -100,20 +100,24 @@ export async function POST() {
     const aggregated = aggregateCreatorProfiles(posts);
     console.log(`[Scout] ${aggregated.length} unique creators`);
 
-    // ----- STEP 4: Remove existing DB creators -----
-    const { data: existingCreators } = await supabase
-      .from('creators')
-      .select('instagram_username');
-    const existingUsernames = (existingCreators ?? []).map(
-      (c: { instagram_username: string }) => c.instagram_username
-    );
+    // ----- STEP 4: Only exclude creators you've already reviewed (approved/skipped/dm_sent) -----
+    const { data: reviewedRecords } = await supabase
+      .from('outreach_records')
+      .select('creator_id, creators(instagram_username)')
+      .in('status', ['approved', 'skipped', 'dm_drafted', 'dm_sent', 'replied', 'interested', 'declined', 'no_response', 'onboarded']);
+
+    const reviewedUsernames = (reviewedRecords ?? [])
+      .map((r: { creators: { instagram_username: string } | null }) => r.creators?.instagram_username)
+      .filter(Boolean) as string[];
+
+    console.log(`[Scout] ${reviewedUsernames.length} previously reviewed creators (will skip)`);
 
     const fresh = filterCreators(aggregated, {
       minFollowers,
       maxFollowers,
-      excludeUsernames: existingUsernames,
+      excludeUsernames: reviewedUsernames,
     });
-    console.log(`[Scout] ${fresh.length} new creators (after removing existing)`);
+    console.log(`[Scout] ${fresh.length} candidates to check`);
 
     // ----- STEP 5: Pre-sort by location match -----
     const locLower = locationTags.map(k => k.toLowerCase());
