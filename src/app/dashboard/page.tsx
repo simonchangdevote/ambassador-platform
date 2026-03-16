@@ -29,8 +29,8 @@ interface RecentActivity {
 }
 
 interface Summary {
-  discovered: number;
-  presented: number;
+  totalCreators: number;
+  pendingReview: number;
   approved: number;
   skipped: number;
   dmSent: number;
@@ -174,8 +174,8 @@ export default function DashboardPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h3 className="font-semibold text-gray-800">This Week&apos;s Candidates</h3>
             <p className="text-sm text-gray-500 mt-1">
-              {summary && summary.presented > 0
-                ? `${summary.presented} candidates waiting for review.`
+              {summary && summary.pendingReview > 0
+                ? `${summary.pendingReview} candidates waiting for review.`
                 : 'Review and approve new ambassador candidates.'}
             </p>
             <a
