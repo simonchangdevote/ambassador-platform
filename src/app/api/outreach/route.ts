@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/outreach
  * Fetch all approved/dm_drafted/dm_sent/replied/interested creators for the pipeline
@@ -119,6 +121,8 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { outreach_id, status, notes } = body;
 
+    console.log('[Outreach PATCH] Updating:', { outreach_id, status, notes });
+
     if (!outreach_id || !status) {
       return NextResponse.json(
         { error: 'outreach_id and status are required' },
@@ -154,9 +158,11 @@ export async function PATCH(request: NextRequest) {
       .eq('id', outreach_id);
 
     if (error) {
-      console.error('[Outreach] Update error:', error);
-      return NextResponse.json({ error: 'Failed to update outreach status.' }, { status: 500 });
+      console.error('[Outreach PATCH] Update error:', error);
+      return NextResponse.json({ error: 'Failed to update outreach status.', debug: error.message }, { status: 500 });
     }
+
+    console.log('[Outreach PATCH] Success:', { outreach_id, status });
 
     // Log activity
     await supabase.from('activity_log').insert({
