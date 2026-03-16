@@ -1,5 +1,6 @@
 // ============================================================
 // OUTREACH MESSAGE — Shows DM text with copy button + status tracker
+// Includes quick action buttons: Mark as Sent, Decline
 // ============================================================
 'use client';
 
@@ -32,6 +33,7 @@ interface Props {
 export default function OutreachMessage({ item, statusOptions, onStatusChange }: Props) {
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState(item.responseNote ?? '');
+  const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
 
   async function handleCopy() {
     await navigator.clipboard.writeText(item.dmMessage);
@@ -39,8 +41,15 @@ export default function OutreachMessage({ item, statusOptions, onStatusChange }:
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function handleDecline() {
+    onStatusChange('declined');
+    setShowDeclineConfirm(false);
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div className={`bg-white rounded-xl border p-6 ${
+      item.status === 'declined' ? 'border-red-200 opacity-75' : 'border-gray-200'
+    }`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -103,10 +112,51 @@ export default function OutreachMessage({ item, statusOptions, onStatusChange }:
             Mark as Sent
           </button>
         )}
+
+        {/* Decline button — shown for all active statuses (not already declined/onboarded) */}
+        {!['declined', 'onboarded'].includes(item.status) && (
+          <>
+            {!showDeclineConfirm ? (
+              <button
+                onClick={() => setShowDeclineConfirm(true)}
+                className="text-sm px-3 py-1 bg-red-50 text-red-600 rounded-md
+                           hover:bg-red-100 transition-colors ml-auto"
+              >
+                Decline
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 ml-auto">
+                <span className="text-xs text-red-600">Are you sure?</span>
+                <button
+                  onClick={handleDecline}
+                  className="text-sm px-3 py-1 bg-red-600 text-white rounded-md
+                             hover:bg-red-700 transition-colors"
+                >
+                  Yes, Decline
+                </button>
+                <button
+                  onClick={() => setShowDeclineConfirm(false)}
+                  className="text-sm px-3 py-1 bg-gray-100 text-gray-600 rounded-md
+                             hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
+      {/* Declined banner */}
+      {item.status === 'declined' && (
+        <div className="mt-4 bg-red-50 border border-red-100 rounded-lg p-3">
+          <p className="text-sm text-red-700 font-medium">This creator has been declined.</p>
+          <p className="text-xs text-red-500 mt-1">They will appear in History &amp; Archive.</p>
+        </div>
+      )}
+
       {/* Response Notes */}
-      {['replied', 'interested', 'declined', 'onboarded'].includes(item.status) && (
+      {['replied', 'interested', 'declined', 'no_response', 'onboarded'].includes(item.status) && (
         <div className="mt-4">
           <label className="text-xs font-medium text-gray-500">Response Notes</label>
           <textarea
