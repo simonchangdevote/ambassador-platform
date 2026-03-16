@@ -23,7 +23,7 @@ export default function CandidatesPage() {
   const fetchCandidates = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/candidates');
+      const res = await fetch(`/api/candidates?_t=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
       if (data.candidates && data.candidates.length > 0) {
         setCandidates(data.candidates);
