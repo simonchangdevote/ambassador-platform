@@ -1,6 +1,7 @@
 // ============================================================
 // API: /api/dashboard — Aggregate stats for the dashboard
-// Only counts meaningful statuses and deduplicates by creator
+// Only counts creators that have been actually acted on (approved/skipped)
+// plus those currently pending review in the active batch
 // ============================================================
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -18,24 +19,36 @@ export async function GET() {
       .limit(1)
       .single();
 
-    // Fetch ALL outreach records that have reached at least 'presented' status
-    // (skip 'discovered' and 'scored' which are intermediate/incomplete)
-    const { data: records, error } = await supabase
+    // Step 1: Fetch records that have been ACTUALLY acted on (not stale 'presented')
+    const { data: actedRecords, error: actedError } = await supabase
       .from('outreach_records')
       .select('id, status, creator_id, batch_id, created_at, updated_at')
       .in('status', [
-        'presented', 'approved', 'skipped', 'dm_drafted', 'dm_sent',
+        'approved', 'skipped', 'dm_drafted', 'dm_sent',
         'replied', 'interested', 'declined', 'no_response', 'onboarded',
       ]);
 
-    if (error) {
-      console.error('[Dashboard] Query error:', error);
+    if (actedError) {
+      console.error('[Dashboard] Acted records query error:', actedError);
       return NextResponse.json({ error: 'Failed to load dashboard stats.' }, { status: 500 });
     }
 
-    const allRecords = records ?? [];
+    // Step 2: Fetch 'presented' records ONLY from the active batch (these are pending review)
+    let pendingRecords: typeof actedRecords = [];
+    if (activeBatch) {
+      const { data: pending } = await supabase
+        .from('outreach_records')
+        .select('id, status, creator_id, batch_id, created_at, updated_at')
+        .eq('batch_id', activeBatch.id)
+        .eq('status', 'presented');
 
-    // Deduplicate: keep only the latest record per creator (a creator may appear in multiple batches)
+      pendingRecords = pending ?? [];
+    }
+
+    // Combine: acted records + active batch pending
+    const allRecords = [...(actedRecords ?? []), ...pendingRecords];
+
+    // Deduplicate by creator (keep latest status)
     const creatorLatest = new Map<string, { status: string; batch_id: string; updated_at: string }>();
     for (const r of allRecords) {
       const cid = r.creator_id as string;
@@ -55,20 +68,10 @@ export async function GET() {
       statusCounts[record.status] = (statusCounts[record.status] || 0) + 1;
     }
 
-    // "Pending review" = presented creators in the ACTIVE batch only
-    let pendingReview = 0;
-    if (activeBatch) {
-      for (const [, record] of creatorLatest) {
-        if (record.status === 'presented' && record.batch_id === activeBatch.id) {
-          pendingReview++;
-        }
-      }
-    }
+    // Pending review = presented in active batch (after dedup)
+    const pendingReview = statusCounts['presented'] || 0;
 
-    // Total unique creators ever scouted
-    const totalCreators = creatorLatest.size;
-
-    // Pipeline numbers
+    // Pipeline numbers (only actually acted-on statuses)
     const approved = (statusCounts['approved'] || 0) + (statusCounts['dm_drafted'] || 0);
     const dmSent = statusCounts['dm_sent'] || 0;
     const replied = statusCounts['replied'] || 0;
@@ -78,9 +81,9 @@ export async function GET() {
     const onboarded = statusCounts['onboarded'] || 0;
     const skipped = statusCounts['skipped'] || 0;
 
-    // Reviewed = anyone you clicked approve or skip on
     const totalApproved = approved + dmSent + replied + interested + declined + noResponse + onboarded;
     const reviewed = totalApproved + skipped;
+    const totalCreators = creatorLatest.size;
 
     // Calculate rates
     const approvalRate = reviewed > 0 ? Math.round(totalApproved / reviewed * 100) : 0;
@@ -95,7 +98,7 @@ export async function GET() {
       {
         label: 'Scouted',
         value: totalCreators,
-        change: pendingReview > 0 ? `${pendingReview} pending review` : 'All reviewed',
+        change: pendingReview > 0 ? `${pendingReview} pending review` : reviewed > 0 ? `${reviewed} reviewed` : 'No candidates yet',
         color: 'text-gray-900',
       },
       {
@@ -142,13 +145,11 @@ export async function GET() {
       { label: 'Onboarded', count: onboarded, color: 'bg-ocean-500', percent: Math.round(onboarded / maxCount * 100) },
     ];
 
-    // Recent activity (last 5 actions, excluding stale 'presented')
-    const recentRecords = allRecords
-      .filter(r => !['presented', 'discovered', 'scored'].includes(r.status as string))
+    // Recent activity (last 5 actually acted-on records)
+    const recentRecords = (actedRecords ?? [])
       .sort((a, b) => new Date(b.updated_at as string).getTime() - new Date(a.updated_at as string).getTime())
       .slice(0, 5);
 
-    // Fetch creator names for recent activity
     let recentActivity: { status: string; username: string; updatedAt: string }[] = [];
     if (recentRecords.length > 0) {
       const creatorIds = recentRecords.map(r => r.creator_id);
