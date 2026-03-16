@@ -142,14 +142,14 @@ export async function GET() {
     ];
 
     // Recent activity
-    const actedRecords = records
+    const recentRecords = records
       .filter(r => r.status !== 'presented')
       .sort((a, b) => new Date(b.updated_at as string).getTime() - new Date(a.updated_at as string).getTime())
       .slice(0, 5);
 
     let recentActivity: { status: string; username: string; updatedAt: string }[] = [];
-    if (actedRecords.length > 0) {
-      const creatorIds = actedRecords.map(r => r.creator_id);
+    if (recentRecords.length > 0) {
+      const creatorIds = recentRecords.map(r => r.creator_id);
       const { data: creators } = await supabase
         .from('creators')
         .select('id, instagram_username')
@@ -159,7 +159,7 @@ export async function GET() {
         (creators ?? []).map((c: { id: string; instagram_username: string }) => [c.id, c.instagram_username])
       );
 
-      recentActivity = actedRecords.map(r => ({
+      recentActivity = recentRecords.map(r => ({
         status: r.status as string,
         username: creatorMap.get(r.creator_id as string) || 'Unknown',
         updatedAt: r.updated_at as string,
