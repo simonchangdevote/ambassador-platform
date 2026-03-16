@@ -94,7 +94,7 @@ export default function OutreachMessage({ item, statusOptions, onStatusChange }:
           Open Instagram Profile →
         </a>
 
-        {item.status === 'approved' && (
+        {(item.status === 'approved' || item.status === 'dm_drafted') && (
           <button
             onClick={() => onStatusChange('dm_sent')}
             className="text-sm px-3 py-1 bg-purple-100 text-purple-700 rounded-md
