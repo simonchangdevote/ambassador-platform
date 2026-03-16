@@ -6,6 +6,8 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const supabase = createServerClient();
@@ -71,7 +73,7 @@ export async function GET() {
     // Pending review = presented in active batch (after dedup)
     const pendingReview = statusCounts['presented'] || 0;
 
-    // Pipeline numbers (only actually acted-on statuses)
+    // Pipeline numbers — each count is EXCLUSIVE (only creators at that exact current status)
     const approved = (statusCounts['approved'] || 0) + (statusCounts['dm_drafted'] || 0);
     const dmSent = statusCounts['dm_sent'] || 0;
     const replied = statusCounts['replied'] || 0;
@@ -81,19 +83,14 @@ export async function GET() {
     const onboarded = statusCounts['onboarded'] || 0;
     const skipped = statusCounts['skipped'] || 0;
 
-    const totalApproved = approved + dmSent + replied + interested + declined + noResponse + onboarded;
-    const reviewed = totalApproved + skipped;
     const totalCreators = creatorLatest.size;
+    const notSkipped = totalCreators - skipped - pendingReview;
+    const reviewed = totalCreators - pendingReview;
 
-    // Calculate rates
-    const approvalRate = reviewed > 0 ? Math.round(totalApproved / reviewed * 100) : 0;
-    const dmSentTotal = dmSent + replied + interested + declined + noResponse + onboarded;
-    const sendRate = totalApproved > 0 ? Math.round(dmSentTotal / totalApproved * 100) : 0;
-    const replyTotal = replied + interested + declined + onboarded;
-    const responseRate = dmSentTotal > 0 ? Math.round(replyTotal / dmSentTotal * 100) : 0;
-    const interestRate = replyTotal > 0 ? Math.round((interested + onboarded) / replyTotal * 100) : 0;
+    console.log('[Dashboard] Status counts:', statusCounts);
+    console.log('[Dashboard] Total creators:', totalCreators, 'Reviewed:', reviewed);
 
-    // Stats for the cards
+    // Stats for the cards — each shows CURRENT count at that exact status
     const stats = [
       {
         label: 'Scouted',
@@ -103,26 +100,26 @@ export async function GET() {
       },
       {
         label: 'Approved',
-        value: totalApproved,
-        change: reviewed > 0 ? `${approvalRate}% approval rate` : 'No reviews yet',
+        value: approved,
+        change: skipped > 0 ? `${skipped} skipped` : 'Awaiting DM',
         color: 'text-blue-600',
       },
       {
         label: 'DMs Sent',
-        value: dmSentTotal,
-        change: dmSentTotal > 0 ? `${sendRate}% of approved` : 'None sent yet',
+        value: dmSent,
+        change: noResponse > 0 ? `${noResponse} no response` : dmSent > 0 ? 'Awaiting replies' : 'None sent yet',
         color: 'text-purple-600',
       },
       {
         label: 'Replies',
-        value: replyTotal,
-        change: dmSentTotal > 0 ? `${responseRate}% response rate` : 'Awaiting replies',
+        value: replied,
+        change: declined > 0 ? `${declined} declined` : replied > 0 ? 'Awaiting follow-up' : 'Awaiting replies',
         color: 'text-amber-600',
       },
       {
         label: 'Interested',
-        value: interested + onboarded,
-        change: replyTotal > 0 ? `${interestRate}% of replies` : 'None yet',
+        value: interested,
+        change: interested > 0 ? 'Ready to onboard' : 'None yet',
         color: 'text-emerald-600',
       },
       {
@@ -133,15 +130,15 @@ export async function GET() {
       },
     ];
 
-    // Pipeline funnel data
+    // Pipeline funnel data — also exclusive counts
     const maxCount = Math.max(totalCreators, 1);
     const pipeline = [
       { label: 'Scouted', count: totalCreators, color: 'bg-gray-400', percent: 100 },
-      { label: 'Reviewed', count: reviewed, color: 'bg-brand-400', percent: Math.round(reviewed / maxCount * 100) },
-      { label: 'Approved', count: totalApproved, color: 'bg-blue-500', percent: Math.round(totalApproved / maxCount * 100) },
-      { label: 'DM Sent', count: dmSentTotal, color: 'bg-purple-500', percent: Math.round(dmSentTotal / maxCount * 100) },
-      { label: 'Replied', count: replyTotal, color: 'bg-amber-500', percent: Math.round(replyTotal / maxCount * 100) },
-      { label: 'Interested', count: interested + onboarded, color: 'bg-emerald-500', percent: Math.round((interested + onboarded) / maxCount * 100) },
+      { label: 'Skipped', count: skipped, color: 'bg-gray-300', percent: Math.round(skipped / maxCount * 100) },
+      { label: 'Approved', count: approved, color: 'bg-blue-500', percent: Math.round(approved / maxCount * 100) },
+      { label: 'DM Sent', count: dmSent, color: 'bg-purple-500', percent: Math.round(dmSent / maxCount * 100) },
+      { label: 'Replied', count: replied, color: 'bg-amber-500', percent: Math.round(replied / maxCount * 100) },
+      { label: 'Interested', count: interested, color: 'bg-emerald-500', percent: Math.round(interested / maxCount * 100) },
       { label: 'Onboarded', count: onboarded, color: 'bg-ocean-500', percent: Math.round(onboarded / maxCount * 100) },
     ];
 
@@ -174,10 +171,10 @@ export async function GET() {
       summary: {
         totalCreators,
         pendingReview,
-        approved: totalApproved,
+        approved,
         skipped,
-        dmSent: dmSentTotal,
-        replied: replyTotal,
+        dmSent,
+        replied,
         interested,
         onboarded,
       },
