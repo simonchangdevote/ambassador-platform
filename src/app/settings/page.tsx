@@ -1,6 +1,5 @@
 // ============================================================
-// SETTINGS — Simplified: Hard Filters + Outreach Template
-// No scoring weight sliders — scoring uses fixed internal weights
+// SETTINGS — Search hashtags, filters, outreach template
 // ============================================================
 'use client';
 
@@ -10,9 +9,8 @@ import { getTemplateVariables } from '@/lib/message-templates';
 export default function SettingsPage() {
   const [brandName, setBrandName] = useState('Your Brand');
   const [searchHashtags, setSearchHashtags] = useState('');
-  const [nicheKeywords, setNicheKeywords] = useState('');
   const [locationTags, setLocationTags] = useState('');
-  const [minFollowers, setMinFollowers] = useState('1000');
+  const [minFollowers, setMinFollowers] = useState('500');
   const [maxFollowers, setMaxFollowers] = useState('500000');
   const [minReels, setMinReels] = useState('5');
   const [messageTemplate, setMessageTemplate] = useState('');
@@ -23,7 +21,6 @@ export default function SettingsPage() {
 
   const templateVars = getTemplateVariables();
 
-  // Load settings from Supabase on mount
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -33,9 +30,8 @@ export default function SettingsPage() {
           const c = data.config;
           setBrandName(c.name || 'Your Brand');
           setSearchHashtags((c.niche_hashtags || []).join(', '));
-          setNicheKeywords((c.keywords || []).join(', '));
           setLocationTags((c.required_hashtags || []).join(', '));
-          setMinFollowers(String(c.target_follower_min || 1000));
+          setMinFollowers(String(c.target_follower_min || 500));
           setMaxFollowers(String(c.target_follower_max || 500000));
           setMinReels(String(c.min_reels || 5));
           setMessageTemplate(c.outreach_message_template || '');
@@ -53,8 +49,7 @@ export default function SettingsPage() {
     setIsSaving(true);
     setSaveMessage('');
 
-    // Basic validation
-    const min = parseInt(minFollowers) || 1000;
+    const min = parseInt(minFollowers) || 500;
     const max = parseInt(maxFollowers) || 500000;
     if (min >= max) {
       setSaveMessage('Min followers must be less than max followers.');
@@ -69,7 +64,6 @@ export default function SettingsPage() {
         body: JSON.stringify({
           name: brandName,
           niche_hashtags: searchHashtags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
-          keywords: nicheKeywords.split(',').map(k => k.trim()).filter(Boolean),
           required_hashtags: locationTags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
           target_follower_min: min,
           target_follower_max: max,
@@ -111,39 +105,35 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-500 mt-1">
-          Configure what to search for, who qualifies, and how to reach out.
-          Changes apply to the next scouting run.
+          Configure your scouting criteria. Changes apply to the next scouting run.
         </p>
       </div>
 
-      {/* Brand Info */}
-      <Section title="Brand" description="Your brand name (used in outreach messages).">
-        <Field label="Brand Name" value={brandName} onChange={setBrandName} />
+      {/* Brand */}
+      <Section title="Brand">
+        <Field label="Brand Name" value={brandName} onChange={setBrandName}
+               hint="Used in outreach messages" />
       </Section>
 
-      {/* What to Search */}
-      <Section title="Instagram Search" description="Hashtags the scout uses to find posts on Instagram. These are the 'fishing net' — cast wide.">
+      {/* Search */}
+      <Section title="Instagram Search"
+               description="Hashtags the scout uses to find posts. These define what content you're looking for.">
         <Field
           label="Search Hashtags"
           value={searchHashtags}
           onChange={setSearchHashtags}
-          hint="Comma-separated, no # needed. E.g.: spearfishing, spearo, freediving, spearfishingaustralia, catchandcook"
+          hint="Comma-separated, no # needed. E.g.: spearfishing, spearo, freediving, spearfishingaustralia, australianspearfishing"
         />
       </Section>
 
-      {/* Hard Filters — Who Qualifies */}
-      <Section title="Creator Filters" description="Creators MUST pass ALL of these to appear as candidates. This is where you control quality.">
-        <Field
-          label="Niche Content Keywords"
-          value={nicheKeywords}
-          onChange={setNicheKeywords}
-          hint="Creator must have these in their hashtags or bio. E.g.: spearfishing, spearo, freediving, spearfish"
-        />
+      {/* Filters */}
+      <Section title="Creator Filters"
+               description="Every creator must pass ALL of these to become a candidate. The app keeps searching until it finds 10 qualified creators.">
         <Field
           label="Location Tags"
           value={locationTags}
           onChange={setLocationTags}
-          hint="Creator must match at least one of these (in hashtags or bio). E.g.: australia, australian, cairns, qld, queensland"
+          hint="Creator must match at least one in their hashtags, bio, or post captions. E.g.: australia, australian, aussie"
         />
         <div className="grid grid-cols-3 gap-4">
           <Field label="Min Followers" value={minFollowers} onChange={setMinFollowers} type="number" />
@@ -156,8 +146,9 @@ export default function SettingsPage() {
         </p>
       </Section>
 
-      {/* How scoring works — info only */}
-      <Section title="How Ranking Works" description="Creators who pass all filters above are ranked automatically by:">
+      {/* How ranking works */}
+      <Section title="How Ranking Works"
+               description="Creators who pass all filters are ranked automatically by:">
         <div className="space-y-2 text-sm text-gray-600">
           <div className="flex items-center gap-3">
             <span className="w-16 text-right font-semibold text-brand-600">40%</span>
@@ -172,14 +163,11 @@ export default function SettingsPage() {
             <span>Reels Activity — how much video content they produce</span>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-3">
-          These weights are fixed and optimised for finding the best micro-influencer ambassadors.
-          The niche/location/follower filters above are what controls who gets through.
-        </p>
       </Section>
 
       {/* Outreach Template */}
-      <Section title="Outreach Message" description="DM template for approved creators. Variables get replaced automatically.">
+      <Section title="Outreach Message"
+               description="DM template for approved creators. Variables get replaced automatically.">
         <div className="flex flex-wrap gap-2 mb-3">
           {templateVars.map(v => (
             <span key={v.key} className="px-2 py-1 bg-brand-50 text-brand-700 text-xs
