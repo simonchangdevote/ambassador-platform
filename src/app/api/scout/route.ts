@@ -1,6 +1,6 @@
 // ============================================================
-// API: /api/scout — Trigger a weekly scouting run
-// HARD FILTERS → then RANK by simplified 3-dimension score
+// API: /api/scout — Ambassador Scouting Engine
+// Search → Pre-sort → Verify-until-10 → Rank → Present
 // ============================================================
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -13,34 +13,22 @@ import {
 import { calculateOverallScore } from '@/lib/scoring';
 import type { Creator } from '@/types';
 
-/**
- * POST /api/scout
- * Pipeline:
- * 1. Search Instagram hashtags → raw posts
- * 2. Aggregate posts into creator profiles
- * 3. Basic filter (remove duplicates, skip existing DB creators)
- * 4. Verify each profile via Apify (get real data)
- * 5. HARD FILTER: follower range
- * 6. HARD FILTER: niche keywords (must match in hashtags or bio)
- * 7. HARD FILTER: location tags (must match in hashtags or bio)
- * 8. HARD FILTER: minimum reels count
- * 9. Score & rank top 10
- * 10. Save to Supabase
- */
+const TARGET_CANDIDATES = 10;  // Stop when we have this many qualified creators
+const MAX_TIME_MS = 240000;     // 240 seconds — leaves 60s buffer for Vercel's 300s limit
+const PROFILE_TIMEOUT_MS = 20000; // 20 seconds max per profile verification
+
 export async function POST() {
   try {
     const apifyToken = process.env.APIFY_API_TOKEN;
     if (!apifyToken) {
       return NextResponse.json(
-        {
-          success: false,
-          error: 'APIFY_API_TOKEN not configured. Add it to your Vercel environment variables.',
-        },
+        { success: false, error: 'APIFY_API_TOKEN not configured. Add it to your Vercel environment variables.' },
         { status: 400 }
       );
     }
 
     const supabase = createServerClient();
+    const startTime = Date.now();
 
     // ----- LOAD CONFIG -----
     const { data: brandConfig } = await supabase
@@ -50,27 +38,21 @@ export async function POST() {
       .single();
 
     const searchHashtags = brandConfig?.niche_hashtags ?? [
-      'spearfishing', 'spearo', 'freediving', 'spearfishingaustralia',
-      'australianspearfishing', 'catchandcook',
+      'spearfishing', 'spearo', 'freediving', 'spearfishingaustralia', 'australianspearfishing',
     ];
-    const nicheKeywords: string[] = brandConfig?.keywords ?? [
-      'spearfishing', 'spearo', 'freediving', 'spearfish',
-    ];
-    const locationTags: string[] = brandConfig?.required_hashtags ?? [
-      'australia', 'australian', 'cairns', 'qld', 'queensland',
-    ];
-    const minFollowers = brandConfig?.target_follower_min ?? 1000;
+    const locationTags: string[] = brandConfig?.required_hashtags ?? ['australia', 'australian', 'aussie'];
+    const minFollowers = brandConfig?.target_follower_min ?? 500;
     const maxFollowers = brandConfig?.target_follower_max ?? 500000;
     const minReels = brandConfig?.min_reels ?? 5;
 
     console.log(`[Scout] === CONFIG ===`);
     console.log(`[Scout] Search hashtags: [${searchHashtags.join(', ')}]`);
-    console.log(`[Scout] Niche keywords: [${nicheKeywords.join(', ')}]`);
     console.log(`[Scout] Location tags: [${locationTags.join(', ')}]`);
     console.log(`[Scout] Followers: ${minFollowers}–${maxFollowers}`);
     console.log(`[Scout] Min reels: ${minReels}`);
+    console.log(`[Scout] Target: ${TARGET_CANDIDATES} qualified creators`);
 
-    // ----- STEP 1: Create a weekly batch -----
+    // ----- STEP 1: Create batch -----
     const now = new Date();
     const weekNumber = getWeekNumber(now);
     const year = now.getFullYear();
@@ -98,8 +80,6 @@ export async function POST() {
       );
     }
 
-    console.log(`[Scout] Created batch ${batch.id}`);
-
     // ----- STEP 2: Search Instagram via Apify -----
     const posts = await scoutByHashtags(searchHashtags, 50);
     console.log(`[Scout] Found ${posts.length} total posts`);
@@ -108,7 +88,6 @@ export async function POST() {
       await supabase.from('weekly_batches')
         .update({ status: 'completed', candidates_found: 0 })
         .eq('id', batch.id);
-
       return NextResponse.json({
         success: true,
         message: 'No posts found for your search hashtags. Try adjusting them in Settings.',
@@ -121,7 +100,7 @@ export async function POST() {
     const aggregated = aggregateCreatorProfiles(posts);
     console.log(`[Scout] ${aggregated.length} unique creators`);
 
-    // ----- STEP 4: Skip existing DB creators -----
+    // ----- STEP 4: Remove existing DB creators -----
     const { data: existingCreators } = await supabase
       .from('creators')
       .select('instagram_username');
@@ -136,173 +115,146 @@ export async function POST() {
     });
     console.log(`[Scout] ${fresh.length} new creators (after removing existing)`);
 
-    // ----- STEP 4b: PRE-SORT — Prioritise creators found via location-specific hashtags -----
-    // This ensures we don't waste Apify credits verifying creators from other countries
-    const allLocationKeywords = [...locationTags, ...nicheKeywords].map(k => k.toLowerCase());
+    // ----- STEP 5: Pre-sort by location match -----
+    const locLower = locationTags.map(k => k.toLowerCase());
     const sorted = [...fresh].sort((a, b) => {
       const aSourceTags = (a.source_hashtags ?? []).map(h => h.toLowerCase());
       const bSourceTags = (b.source_hashtags ?? []).map(h => h.toLowerCase());
       const aCaptions = (a.recent_captions ?? []).join(' ').toLowerCase();
       const bCaptions = (b.recent_captions ?? []).join(' ').toLowerCase();
 
-      // Count how many location keywords appear in source hashtags + captions
-      const aScore = allLocationKeywords.filter(kw =>
+      const aScore = locLower.filter(kw =>
         aSourceTags.some(t => t.includes(kw)) || aCaptions.includes(kw)
       ).length;
-      const bScore = allLocationKeywords.filter(kw =>
+      const bScore = locLower.filter(kw =>
         bSourceTags.some(t => t.includes(kw)) || bCaptions.includes(kw)
       ).length;
 
-      return bScore - aScore; // Higher match count first
+      return bScore - aScore;
     });
 
-    const topCreators = sorted.slice(0, 5);
-    console.log(`[Scout] Top 5 prioritised creators: ${topCreators.map(c => `@${c.instagram_username} (source: ${(c.source_hashtags ?? []).join(', ')})`).join(' | ')}`);
+    console.log(`[Scout] Top 5 after sort: ${sorted.slice(0, 5).map(c => `@${c.instagram_username}`).join(', ')}`);
 
-    // ----- STEP 5: Verify profiles via Apify -----
-    // Limited to 12 profiles with 20s timeout each to avoid Vercel 300s limit
+    // ----- STEP 6: Verify-until-10 loop -----
     await supabase.from('weekly_batches')
       .update({ status: 'scoring' })
       .eq('id', batch.id);
 
-    const verified: Creator[] = [];
-    const toVerify = sorted.slice(0, 12); // 12 max — keeps total under 240s worst case
-    const PROFILE_TIMEOUT = 20000; // 20 seconds per profile max
+    const qualified: Creator[] = [];
+    let verifiedCount = 0;
+    let skippedCount = 0;
 
-    for (const candidate of toVerify) {
+    for (const candidate of sorted) {
+      // Stop conditions
+      if (qualified.length >= TARGET_CANDIDATES) {
+        console.log(`[Scout] Reached ${TARGET_CANDIDATES} qualified creators — stopping`);
+        break;
+      }
+      if (Date.now() - startTime > MAX_TIME_MS) {
+        console.log(`[Scout] Time limit reached (${Math.round((Date.now() - startTime) / 1000)}s) — stopping with ${qualified.length} qualified`);
+        break;
+      }
       if (!candidate.instagram_username) continue;
-      try {
-        console.log(`[Scout] Verifying @${candidate.instagram_username}...`);
 
-        // Race the verification against a timeout
+      // Verify profile via Apify (with timeout)
+      try {
+        console.log(`[Scout] [${qualified.length}/${TARGET_CANDIDATES}] Verifying @${candidate.instagram_username}...`);
+
         const result = await Promise.race([
           verifyCreatorProfile(candidate.instagram_username),
           new Promise<{ exists: false; creator: null }>((resolve) =>
             setTimeout(() => {
-              console.log(`[Scout] ⏱ @${candidate.instagram_username} — timed out after 20s, skipping`);
+              console.log(`[Scout] ⏱ @${candidate.instagram_username} — timed out, skipping`);
               resolve({ exists: false, creator: null });
-            }, PROFILE_TIMEOUT)
+            }, PROFILE_TIMEOUT_MS)
           ),
         ]);
 
-        if (result.exists && result.creator) {
-          verified.push({
-            ...result.creator,
-            source_hashtags: candidate.source_hashtags,
-          });
-          console.log(`[Scout] ✓ @${candidate.instagram_username} — ${result.creator.followers_count} followers, ${result.creator.posts_count} posts`);
-        } else if (result.exists === false && result.creator === null) {
-          // Timed out or not found — already logged
-        } else {
-          console.log(`[Scout] ✗ @${candidate.instagram_username} — profile not found`);
+        if (!result.exists || !result.creator) {
+          skippedCount++;
+          continue;
         }
+
+        verifiedCount++;
+        const creator: Creator = {
+          ...result.creator,
+          source_hashtags: candidate.source_hashtags,
+        };
+
+        console.log(`[Scout] ✓ @${creator.instagram_username} — ${creator.followers_count} followers`);
+
+        // --- FILTER 1: Follower range ---
+        if (creator.followers_count < minFollowers) {
+          console.log(`[Scout] ✗ @${creator.instagram_username} — ${creator.followers_count} followers (below ${minFollowers})`);
+          continue;
+        }
+        if (creator.followers_count > maxFollowers) {
+          console.log(`[Scout] ✗ @${creator.instagram_username} — ${creator.followers_count} followers (above ${maxFollowers})`);
+          continue;
+        }
+
+        // --- FILTER 2: Location tag ---
+        if (locationTags.length > 0) {
+          const allTags = [
+            ...(creator.recent_hashtags ?? []),
+            ...(creator.source_hashtags ?? []),
+          ].map(h => h.toLowerCase().replace(/^#/, ''));
+          const bio = (creator.bio ?? '').toLowerCase();
+          const captionText = (creator.recent_captions ?? []).join(' ').toLowerCase();
+
+          const matchesLocation = locLower.some(loc =>
+            allTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
+          );
+
+          if (!matchesLocation) {
+            console.log(`[Scout] ✗ @${creator.instagram_username} — no location match`);
+            continue;
+          }
+        }
+
+        // --- FILTER 3: Minimum reels ---
+        if (minReels > 0) {
+          const estimatedReels = Math.round(((creator.reels_percentage ?? 0) / 100) * creator.posts_count);
+          if (creator.reels_percentage !== undefined && creator.reels_percentage !== null && estimatedReels < minReels) {
+            console.log(`[Scout] ✗ @${creator.instagram_username} — ~${estimatedReels} reels (below ${minReels})`);
+            continue;
+          }
+        }
+
+        // Passed all filters!
+        console.log(`[Scout] ★ @${creator.instagram_username} QUALIFIED (${qualified.length + 1}/${TARGET_CANDIDATES})`);
+        qualified.push(creator);
+
       } catch (err) {
         console.error(`[Scout] Error verifying @${candidate.instagram_username}:`, err);
+        skippedCount++;
       }
     }
-    console.log(`[Scout] ${verified.length} profiles verified`);
 
-    // ----- STEP 6: HARD FILTER — Follower range -----
-    let qualified = verified.filter(c => {
-      if (c.followers_count < minFollowers) {
-        console.log(`[Scout] FILTER: @${c.instagram_username} — ${c.followers_count} followers (below ${minFollowers})`);
-        return false;
-      }
-      if (c.followers_count > maxFollowers) {
-        console.log(`[Scout] FILTER: @${c.instagram_username} — ${c.followers_count} followers (above ${maxFollowers})`);
-        return false;
-      }
-      return true;
-    });
-    console.log(`[Scout] ${qualified.length} pass follower filter (${minFollowers}–${maxFollowers})`);
-
-    // ----- STEP 7: HARD FILTER — Niche keywords -----
-    // Checks: hashtags + bio + post captions
-    if (nicheKeywords.length > 0) {
-      const nicheL = nicheKeywords.map(k => k.toLowerCase());
-      qualified = qualified.filter(c => {
-        const allTags = [
-          ...(c.recent_hashtags ?? []),
-          ...(c.source_hashtags ?? []),
-        ].map(h => h.toLowerCase().replace(/^#/, ''));
-        const bio = (c.bio ?? '').toLowerCase();
-        const captionText = (c.recent_captions ?? []).join(' ').toLowerCase();
-
-        const matchesNiche = nicheL.some(kw =>
-          allTags.some(tag => tag.includes(kw)) || bio.includes(kw) || captionText.includes(kw)
-        );
-
-        if (!matchesNiche) {
-          console.log(`[Scout] FILTER: @${c.instagram_username} — no niche keyword match in hashtags/bio/captions`);
-        }
-        return matchesNiche;
-      });
-      console.log(`[Scout] ${qualified.length} pass niche filter [${nicheKeywords.join(', ')}]`);
-    }
-
-    // ----- STEP 8: HARD FILTER — Location keywords -----
-    // Checks: hashtags + bio + post captions (many creators mention location in captions, not hashtags)
-    if (locationTags.length > 0) {
-      const locL = locationTags.map(t => t.toLowerCase());
-      qualified = qualified.filter(c => {
-        const allTags = [
-          ...(c.recent_hashtags ?? []),
-          ...(c.source_hashtags ?? []),
-        ].map(h => h.toLowerCase().replace(/^#/, ''));
-        const bio = (c.bio ?? '').toLowerCase();
-        const captionText = (c.recent_captions ?? []).join(' ').toLowerCase();
-
-        const matchesLocation = locL.some(loc =>
-          allTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
-        );
-
-        if (!matchesLocation) {
-          console.log(`[Scout] FILTER: @${c.instagram_username} — no location match in hashtags/bio/captions`);
-        }
-        return matchesLocation;
-      });
-      console.log(`[Scout] ${qualified.length} pass location filter [${locationTags.join(', ')}]`);
-    }
-
-    // ----- STEP 9: HARD FILTER — Minimum reels -----
-    if (minReels > 0) {
-      qualified = qualified.filter(c => {
-        // Use reels_percentage * posts_count to estimate reels count
-        const estimatedReels = Math.round(((c.reels_percentage ?? 0) / 100) * c.posts_count);
-        // If we don't have reels data, be lenient (don't filter out)
-        if (c.reels_percentage === undefined || c.reels_percentage === null) return true;
-        if (estimatedReels < minReels) {
-          console.log(`[Scout] FILTER: @${c.instagram_username} — ~${estimatedReels} reels (below ${minReels})`);
-          return false;
-        }
-        return true;
-      });
-      console.log(`[Scout] ${qualified.length} pass min reels filter (${minReels}+)`);
-    }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log(`[Scout] Verification complete in ${elapsed}s — ${verifiedCount} verified, ${skippedCount} skipped, ${qualified.length} qualified`);
 
     if (qualified.length === 0) {
       await supabase.from('weekly_batches')
         .update({ status: 'completed', candidates_found: 0 })
         .eq('id', batch.id);
-
       return NextResponse.json({
         success: true,
-        message: `Found ${verified.length} creators but none passed all filters. Try relaxing your niche keywords, location tags, or follower range in Settings.`,
+        message: `Verified ${verifiedCount} creators but none passed all filters. Try broadening your location tags or adjusting follower range in Settings.`,
         batch_id: batch.id,
         candidates_found: 0,
       });
     }
 
-    // ----- STEP 10: Score & rank -----
+    // ----- STEP 7: Score & rank -----
     const scored = qualified.map(creator => ({
       creator,
       score: calculateOverallScore(creator),
     }));
-
     scored.sort((a, b) => b.score.overall_score - a.score.overall_score);
-    const top10 = scored.slice(0, 10);
+    const top10 = scored.slice(0, TARGET_CANDIDATES);
 
-    // ----- STEP 11: Save to Supabase -----
+    // ----- STEP 8: Save to Supabase -----
     for (const { creator, score } of top10) {
       const { data: savedCreator, error: creatorError } = await supabase
         .from('creators')
@@ -338,10 +290,8 @@ export async function POST() {
         continue;
       }
 
-      const creatorId = savedCreator.id;
-
       await supabase.from('creator_scores').insert({
-        creator_id: creatorId,
+        creator_id: savedCreator.id,
         batch_id: batch.id,
         content_quality_score: score.content_quality_score,
         engagement_score: score.engagement_score,
@@ -353,13 +303,13 @@ export async function POST() {
       });
 
       await supabase.from('outreach_records').insert({
-        creator_id: creatorId,
+        creator_id: savedCreator.id,
         batch_id: batch.id,
         status: 'presented',
       });
     }
 
-    // ----- STEP 12: Update batch -----
+    // ----- STEP 9: Update batch -----
     await supabase.from('weekly_batches')
       .update({ status: 'review', candidates_found: top10.length })
       .eq('id', batch.id);
@@ -370,9 +320,10 @@ export async function POST() {
         batch_id: batch.id,
         posts_found: posts.length,
         creators_aggregated: aggregated.length,
-        creators_verified: verified.length,
-        pass_followers: qualified.length,
-        top_candidates: top10.length,
+        verified: verifiedCount,
+        qualified: qualified.length,
+        presented: top10.length,
+        elapsed_seconds: elapsed,
       },
     });
 
@@ -380,10 +331,10 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: `Found ${top10.length} verified ambassadors ready for review!`,
+      message: `Found ${top10.length} qualified ambassadors ready for review!`,
       batch_id: batch.id,
       candidates_found: top10.length,
-      verified_count: verified.length,
+      verified_count: verifiedCount,
       total_posts_scanned: posts.length,
     });
   } catch (error) {
