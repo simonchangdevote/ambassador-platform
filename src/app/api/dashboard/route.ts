@@ -16,12 +16,12 @@ export async function GET() {
   try {
     const supabase = createServerClient();
 
-    // All outreach records that reached at least 'presented'
-    const { data: allRecords, error } = await supabase
+    // Only fetch records the user has actually acted on (clicked approve or skip)
+    // This excludes stale 'presented' records from old batches
+    const { data: actedRecords, error } = await supabase
       .from('outreach_records')
       .select('id, status, creator_id, updated_at')
       .in('status', [
-        'presented',
         'approved', 'skipped', 'dm_drafted', 'dm_sent',
         'replied', 'interested', 'declined', 'no_response', 'onboarded',
       ]);
@@ -31,24 +31,23 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to load dashboard stats.' }, { status: 500 });
     }
 
-    const records = allRecords ?? [];
+    const records = actedRecords ?? [];
 
-    // Unique creator count = Scouted
+    // Scouted = unique creators the user has acted on (approved + skipped)
     const uniqueCreators = new Set(records.map(r => r.creator_id));
     const scouted = uniqueCreators.size;
 
-    // Pending review = currently at 'presented'
-    const pendingReview = records.filter(r => r.status === 'presented').length;
+    // Pending review = 0 here (we don't count presented in this query)
+    // The candidates page handles pending review separately
+    const pendingReview = 0;
 
-    // Skipped = permanent milestone
+    // Skipped by current status
     const skipped = records.filter(r => r.status === 'skipped').length;
 
-    // Pipeline records = everything the user approved (non-presented, non-skipped)
-    const pipelineRecords = records.filter(r =>
-      !['presented', 'skipped'].includes(r.status as string)
-    );
+    // Pipeline records = everything in the outreach pipeline (non-skipped)
+    const pipelineRecords = records.filter(r => r.status !== 'skipped');
 
-    // Approved = total pipeline creators (permanent milestone)
+    // Approved = total pipeline creators (permanent milestone — everyone user clicked Approve on)
     const totalApproved = pipelineRecords.length;
 
     // Current exclusive status counts from the Outreach Pipeline
@@ -74,7 +73,7 @@ export async function GET() {
       {
         label: 'Scouted',
         value: scouted,
-        change: pendingReview > 0 ? `${pendingReview} pending review` : `${scouted - pendingReview} reviewed`,
+        change: scouted > 0 ? `${skipped} skipped, ${totalApproved} approved` : 'No candidates yet',
         color: 'text-gray-900',
       },
       {
