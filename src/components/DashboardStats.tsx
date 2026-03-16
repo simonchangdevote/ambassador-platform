@@ -1,20 +1,37 @@
 // ============================================================
-// DASHBOARD STATS — Key metrics overview
+// DASHBOARD STATS — Key metrics overview (receives data via props)
 // ============================================================
 
-const STATS = [
-  { label: 'Discovered', value: '47', change: '+10 this week', color: 'text-gray-900' },
-  { label: 'Approved', value: '18', change: '38% approval rate', color: 'text-blue-600' },
-  { label: 'DMs Sent', value: '14', change: '78% of approved', color: 'text-purple-600' },
-  { label: 'Replies', value: '8', change: '57% response rate', color: 'text-amber-600' },
-  { label: 'Interested', value: '6', change: '75% of replies', color: 'text-emerald-600' },
-  { label: 'Onboarded', value: '3', change: '50% conversion', color: 'text-ocean-600' },
-];
+interface Stat {
+  label: string;
+  value: number;
+  change: string;
+  color: string;
+}
 
-export default function DashboardStats() {
+interface Props {
+  stats: Stat[];
+  isLoading: boolean;
+}
+
+export default function DashboardStats({ stats, isLoading }: Props) {
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 animate-pulse">
+            <div className="h-3 bg-gray-200 rounded w-16 mb-2" />
+            <div className="h-7 bg-gray-200 rounded w-10 mb-1" />
+            <div className="h-3 bg-gray-100 rounded w-20" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-      {STATS.map(stat => (
+      {stats.map(stat => (
         <div
           key={stat.label}
           className="bg-white rounded-xl border border-gray-200 p-4"
