@@ -33,9 +33,12 @@ interface Summary {
   pendingReview: number;
   approved: number;
   skipped: number;
+  dmDrafted: number;
   dmSent: number;
   replied: number;
   interested: number;
+  declined: number;
+  noResponse: number;
   onboarded: number;
 }
 
@@ -194,7 +197,7 @@ export default function DashboardPage() {
                 ? `${summary.pendingReview} candidates waiting for review.`
                 : 'Review and approve new ambassador candidates.'}
             </p>
-            <a
+            
               href="/candidates"
               className="mt-4 inline-block px-4 py-2 bg-brand-600 text-white text-sm
                          font-medium rounded-lg hover:bg-brand-700 transition-colors"
@@ -209,7 +212,7 @@ export default function DashboardPage() {
                 ? `${summary.approved} approved creators ready for outreach.`
                 : 'View approved creators awaiting DM outreach.'}
             </p>
-            <a
+            
               href="/outreach"
               className="mt-4 inline-block px-4 py-2 bg-ocean-600 text-white text-sm
                          font-medium rounded-lg hover:bg-ocean-700 transition-colors"
