@@ -37,6 +37,7 @@ export interface Creator {
   avg_reel_views?: number;
   reels_percentage?: number;  // % of recent posts that are reels
   recent_hashtags?: string[];
+  recent_captions?: string[]; // Captions from recent posts (for keyword matching)
 
   // Social media links
   instagram_url?: string;
