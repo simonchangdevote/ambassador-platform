@@ -160,24 +160,39 @@ export async function POST() {
     console.log(`[Scout] Top 5 prioritised creators: ${topCreators.map(c => `@${c.instagram_username} (source: ${(c.source_hashtags ?? []).join(', ')})`).join(' | ')}`);
 
     // ----- STEP 5: Verify profiles via Apify -----
+    // Limited to 12 profiles with 20s timeout each to avoid Vercel 300s limit
     await supabase.from('weekly_batches')
       .update({ status: 'scoring' })
       .eq('id', batch.id);
 
     const verified: Creator[] = [];
-    const toVerify = sorted.slice(0, 20); // Limit to save Apify credits, best candidates first
+    const toVerify = sorted.slice(0, 12); // 12 max — keeps total under 240s worst case
+    const PROFILE_TIMEOUT = 20000; // 20 seconds per profile max
 
     for (const candidate of toVerify) {
       if (!candidate.instagram_username) continue;
       try {
         console.log(`[Scout] Verifying @${candidate.instagram_username}...`);
-        const result = await verifyCreatorProfile(candidate.instagram_username);
+
+        // Race the verification against a timeout
+        const result = await Promise.race([
+          verifyCreatorProfile(candidate.instagram_username),
+          new Promise<{ exists: false; creator: null }>((resolve) =>
+            setTimeout(() => {
+              console.log(`[Scout] ⏱ @${candidate.instagram_username} — timed out after 20s, skipping`);
+              resolve({ exists: false, creator: null });
+            }, PROFILE_TIMEOUT)
+          ),
+        ]);
+
         if (result.exists && result.creator) {
           verified.push({
             ...result.creator,
             source_hashtags: candidate.source_hashtags,
           });
           console.log(`[Scout] ✓ @${candidate.instagram_username} — ${result.creator.followers_count} followers, ${result.creator.posts_count} posts`);
+        } else if (result.exists === false && result.creator === null) {
+          // Timed out or not found — already logged
         } else {
           console.log(`[Scout] ✗ @${candidate.instagram_username} — profile not found`);
         }
