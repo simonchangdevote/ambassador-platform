@@ -7,6 +7,8 @@ import { createServerClient } from '@/lib/supabase';
 import { generateOutreachMessage } from '@/lib/message-templates';
 import type { CandidateCard, Creator, CreatorScore, OutreachRecord } from '@/types';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/candidates
  * Fetch current batch of candidates from Supabase
@@ -15,6 +17,18 @@ import type { CandidateCard, Creator, CreatorScore, OutreachRecord } from '@/typ
 export async function GET() {
   try {
     const supabase = createServerClient();
+
+    // Get brand config for follower filter range (used for Reach Labels)
+    const { data: brandConfig } = await supabase
+      .from('brand_config')
+      .select('target_follower_min, target_follower_max')
+      .limit(1)
+      .single();
+
+    const followerRange = {
+      min: brandConfig?.target_follower_min ?? 500,
+      max: brandConfig?.target_follower_max ?? 500000,
+    };
 
     // Get the latest batch in 'review' status
     const { data: batch } = await supabase
@@ -98,6 +112,7 @@ export async function GET() {
       batch_id: batch.id,
       total: candidates.length,
       pending: candidates.filter((c: CandidateCard) => c.outreach.status === 'presented').length,
+      followerRange,
     });
   } catch (error) {
     console.error('[Candidates] Error:', error);
@@ -127,14 +142,29 @@ export async function PATCH(request: NextRequest) {
     const supabase = createServerClient();
 
     if (action === 'approve') {
+      console.log('[Candidates] Approving outreach_id:', outreach_id);
+
       // Update outreach status to 'approved'
-      await supabase
+      const { data: approveResult, error: approveError } = await supabase
         .from('outreach_records')
         .update({
           status: 'approved',
           updated_at: new Date().toISOString(),
         })
-        .eq('id', outreach_id);
+        .eq('id', outreach_id)
+        .select();
+
+      if (approveError) {
+        console.error('[Candidates] Approve DB error:', approveError);
+        return NextResponse.json({ success: false, error: approveError.message }, { status: 500 });
+      }
+
+      if (!approveResult || approveResult.length === 0) {
+        console.error('[Candidates] Approve matched 0 rows for outreach_id:', outreach_id);
+        return NextResponse.json({ success: false, error: 'No record found to approve.' }, { status: 404 });
+      }
+
+      console.log('[Candidates] Approve success:', approveResult[0].id);
 
       // Generate a DM message
       let dmMessage = '';
@@ -172,13 +202,28 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (action === 'skip') {
-      await supabase
+      console.log('[Candidates] Skipping outreach_id:', outreach_id);
+
+      const { data: skipResult, error: skipError } = await supabase
         .from('outreach_records')
         .update({
           status: 'skipped',
           updated_at: new Date().toISOString(),
         })
-        .eq('id', outreach_id);
+        .eq('id', outreach_id)
+        .select();
+
+      if (skipError) {
+        console.error('[Candidates] Skip DB error:', skipError);
+        return NextResponse.json({ success: false, error: skipError.message }, { status: 500 });
+      }
+
+      if (!skipResult || skipResult.length === 0) {
+        console.error('[Candidates] Skip matched 0 rows for outreach_id:', outreach_id);
+        return NextResponse.json({ success: false, error: 'No record found to skip.' }, { status: 404 });
+      }
+
+      console.log('[Candidates] Skip success:', skipResult[0].id, '→', skipResult[0].status);
 
       // Log activity
       await supabase.from('activity_log').insert({
