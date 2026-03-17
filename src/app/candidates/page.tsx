@@ -127,6 +127,8 @@ export default function CandidatesPage() {
         setMessage(`Found ${data.candidates_found} verified creators! Loading...`);
         // Fetch the new candidates
         await fetchCandidates();
+      } else if (data.errorType === 'apify_credits') {
+        setMessage('⚠ Apify credit limit reached — please check your Apify account and top up your credits before running another search. Visit console.apify.com to check your usage.');
       } else {
         setMessage(data.error || 'Scouting failed. Check your Apify API token in Vercel settings.');
       }
@@ -192,14 +194,14 @@ export default function CandidatesPage() {
         <div className={`rounded-xl p-4 mb-6 ${
           isScouting
             ? 'bg-amber-50 border border-amber-200'
-            : message.includes('Failed') || message.includes('failed')
+            : message.includes('Failed') || message.includes('failed') || message.includes('⚠')
             ? 'bg-red-50 border border-red-200'
             : 'bg-blue-50 border border-blue-200'
         }`}>
           <p className={`text-sm ${
             isScouting
               ? 'text-amber-800'
-              : message.includes('Failed') || message.includes('failed')
+              : message.includes('Failed') || message.includes('failed') || message.includes('⚠')
               ? 'text-red-800'
               : 'text-blue-800'
           }`}>
