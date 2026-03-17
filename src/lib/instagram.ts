@@ -56,6 +56,13 @@ interface ApifyProfileResult {
  * Scout creators by searching hashtags via Apify
  * Makes a REAL API call to the Instagram Hashtag Scraper actor
  */
+export class ApifyCreditError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ApifyCreditError';
+  }
+}
+
 export async function scoutByHashtags(
   hashtags: string[],
   postsPerHashtag: number = 100
@@ -66,6 +73,7 @@ export async function scoutByHashtags(
   console.log(`[Scout] Searching ${hashtags.length} hashtags via Apify...`);
 
   const allResults: ApifyHashtagResult[] = [];
+  let creditErrorCount = 0;
 
   for (const hashtag of hashtags) {
     try {
@@ -85,6 +93,21 @@ export async function scoutByHashtags(
 
       if (!response.ok) {
         console.error(`[Scout] Apify error for #${hashtag}: ${response.status}`);
+
+        // Detect credit/quota/subscription errors
+        if (response.status === 402 || response.status === 429 || response.status === 403) {
+          let errorBody = '';
+          try { errorBody = await response.text(); } catch (err) { /* ignore */ }
+          console.error(`[Scout] Apify ${response.status} response: ${errorBody}`);
+          creditErrorCount++;
+
+          // If ALL hashtags are failing with credit errors, stop early
+          if (creditErrorCount >= 2) {
+            throw new ApifyCreditError(
+              `Apify returned ${response.status} for multiple hashtags. Your Apify account may be out of credits or your plan limit has been reached.`
+            );
+          }
+        }
         continue;
       }
 
@@ -92,8 +115,17 @@ export async function scoutByHashtags(
       console.log(`[Scout] Found ${posts.length} posts for #${hashtag}`);
       allResults.push(...posts);
     } catch (error) {
+      // Re-throw credit errors so the scout route can catch them
+      if (error instanceof ApifyCreditError) throw error;
       console.error(`[Scout] Error fetching #${hashtag}:`, error);
     }
+  }
+
+  // If we got zero results and had credit errors, it's likely a credit issue
+  if (allResults.length === 0 && creditErrorCount > 0) {
+    throw new ApifyCreditError(
+      'Apify returned no results and encountered credit/quota errors. Check your Apify account credits.'
+    );
   }
 
   return allResults;
