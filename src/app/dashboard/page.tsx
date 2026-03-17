@@ -42,6 +42,15 @@ interface Summary {
   onboarded: number;
 }
 
+interface PipelineCost {
+  total: number;
+  breakdown: {
+    high_profile: { count: number; subtotal: number };
+    brand_ambassador: { count: number; subtotal: number };
+    community_ambassador: { count: number; subtotal: number };
+  };
+}
+
 const STATUS_LABELS: Record<string, string> = {
   presented: 'Presented',
   approved: 'Approved',
@@ -73,6 +82,7 @@ export default function DashboardPage() {
   const [pipeline, setPipeline] = useState<PipelineStage[]>([]);
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [pipelineCost, setPipelineCost] = useState<PipelineCost | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -91,6 +101,7 @@ export default function DashboardPage() {
       setPipeline(data.pipeline ?? []);
       setRecentActivity(data.recentActivity ?? []);
       setSummary(data.summary ?? null);
+      setPipelineCost(data.pipelineCost ?? null);
     } catch (err) {
       setError('Failed to load dashboard. Please refresh.');
     } finally {
@@ -148,6 +159,45 @@ export default function DashboardPage() {
 
       {/* Stats Grid */}
       <DashboardStats stats={stats} isLoading={isLoading} />
+
+      {/* Pipeline Cost */}
+      {pipelineCost && pipelineCost.total > 0 && (
+        <div className="mt-8 bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">Pipeline Cost</h2>
+              <p className="text-sm text-gray-500">Estimated cost for all active creators (excludes skipped &amp; declined)</p>
+            </div>
+            <div className="text-right">
+              <div className="text-3xl font-bold text-gray-900">${pipelineCost.total.toLocaleString()}</div>
+              <div className="text-xs text-gray-400">total per video cycle</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {pipelineCost.breakdown.high_profile.count > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="text-xs font-medium text-amber-700">High Profile</div>
+                <div className="text-lg font-bold text-amber-800">${pipelineCost.breakdown.high_profile.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-amber-600">{pipelineCost.breakdown.high_profile.count} creator{pipelineCost.breakdown.high_profile.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+            {pipelineCost.breakdown.brand_ambassador.count > 0 && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <div className="text-xs font-medium text-blue-700">Brand Ambassador</div>
+                <div className="text-lg font-bold text-blue-800">${pipelineCost.breakdown.brand_ambassador.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-blue-600">{pipelineCost.breakdown.brand_ambassador.count} creator{pipelineCost.breakdown.brand_ambassador.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+            {pipelineCost.breakdown.community_ambassador.count > 0 && (
+              <div className="rounded-lg border border-teal-200 bg-teal-50 p-3">
+                <div className="text-xs font-medium text-teal-700">Community Ambassador</div>
+                <div className="text-lg font-bold text-teal-800">${pipelineCost.breakdown.community_ambassador.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-teal-600">{pipelineCost.breakdown.community_ambassador.count} creator{pipelineCost.breakdown.community_ambassador.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Pipeline Summary */}
       <div className="mt-8">
