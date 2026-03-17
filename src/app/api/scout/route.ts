@@ -9,6 +9,7 @@ import {
   aggregateCreatorProfiles,
   filterCreators,
   verifyCreatorProfile,
+  ApifyCreditError,
 } from '@/lib/instagram';
 import { calculateOverallScore } from '@/lib/scoring';
 import type { Creator } from '@/types';
@@ -343,6 +344,19 @@ export async function POST() {
     });
   } catch (error) {
     console.error('[Scout] Error:', error);
+
+    // Specific message for Apify credit/quota issues
+    if (error instanceof ApifyCreditError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Apify credit limit reached. Please check your Apify account and top up your credits before running another search.',
+          errorType: 'apify_credits',
+        },
+        { status: 402 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: 'Scouting failed. Check server logs for details.' },
       { status: 500 }
