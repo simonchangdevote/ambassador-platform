@@ -18,16 +18,22 @@ export async function GET() {
   try {
     const supabase = createServerClient();
 
-    // Get brand config for follower filter range (used for Reach Labels)
+    // Get brand config for follower filter range (used for Reach Labels) and tier costs
     const { data: brandConfig } = await supabase
       .from('brand_config')
-      .select('target_follower_min, target_follower_max')
+      .select('target_follower_min, target_follower_max, tier_cost_high_profile, tier_cost_brand_ambassador, tier_cost_community_ambassador')
       .limit(1)
       .single();
 
     const followerRange = {
       min: brandConfig?.target_follower_min ?? 500,
       max: brandConfig?.target_follower_max ?? 500000,
+    };
+
+    const tierCosts = {
+      high_profile: brandConfig?.tier_cost_high_profile ?? 300,
+      brand_ambassador: brandConfig?.tier_cost_brand_ambassador ?? 200,
+      community_ambassador: brandConfig?.tier_cost_community_ambassador ?? 50,
     };
 
     // Get the latest batch in 'review' status
@@ -113,6 +119,7 @@ export async function GET() {
       total: candidates.length,
       pending: candidates.filter((c: CandidateCard) => c.outreach.status === 'presented').length,
       followerRange,
+      tierCosts,
     });
   } catch (error) {
     console.error('[Candidates] Error:', error);
