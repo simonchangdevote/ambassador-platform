@@ -186,11 +186,23 @@ export async function GET() {
       debug: {
         totalRecordsFromQuery: records.length,
         uniqueCreatorIds: scouted,
-        statusBreakdown: records.reduce((acc: Record<string, number>, r) => {
+        filteredStatusBreakdown: records.reduce((acc: Record<string, number>, r) => {
           const s = r.status as string;
           acc[s] = (acc[s] || 0) + 1;
           return acc;
         }, {}),
+        allRecords: await (async () => {
+          const { data: allRows, error: allErr } = await supabase
+            .from('outreach_records')
+            .select('id, status, creator_id');
+          if (allErr) return { error: allErr.message };
+          const breakdown: Record<string, number> = {};
+          for (const r of (allRows ?? [])) {
+            const s = r.status as string;
+            breakdown[s] = (breakdown[s] || 0) + 1;
+          }
+          return { totalRows: (allRows ?? []).length, statusBreakdown: breakdown };
+        })(),
       },
     });
   } catch (error) {
