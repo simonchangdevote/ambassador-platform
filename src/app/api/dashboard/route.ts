@@ -16,22 +16,18 @@ export async function GET() {
   try {
     const supabase = createServerClient();
 
-    // Only fetch records the user has actually acted on (clicked approve or skip)
-    // This excludes stale 'presented' records from old batches
-    const { data: actedRecords, error } = await supabase
+    // Fetch ALL records then filter in JS to avoid Supabase query filter issues
+    const { data: allRecordsRaw, error } = await supabase
       .from('outreach_records')
-      .select('id, status, creator_id, updated_at')
-      .in('status', [
-        'approved', 'skipped', 'dm_drafted', 'dm_sent',
-        'replied', 'interested', 'declined', 'no_response', 'onboarded',
-      ]);
+      .select('id, status, creator_id, updated_at');
 
     if (error) {
       console.error('[Dashboard] Query error:', error);
       return NextResponse.json({ error: 'Failed to load dashboard stats.' }, { status: 500 });
     }
 
-    const records = actedRecords ?? [];
+    // Filter out 'presented' in JavaScript instead of Supabase
+    const records = (allRecordsRaw ?? []).filter(r => r.status !== 'presented');
 
     // Scouted = unique creators the user has acted on (approved + skipped)
     const uniqueCreators = new Set(records.map(r => r.creator_id));
@@ -184,25 +180,14 @@ export async function GET() {
         onboarded,
       },
       debug: {
-        totalRecordsFromQuery: records.length,
+        totalFromSupabase: (allRecordsRaw ?? []).length,
+        afterFilteringPresented: records.length,
         uniqueCreatorIds: scouted,
-        filteredStatusBreakdown: records.reduce((acc: Record<string, number>, r) => {
+        statusBreakdown: records.reduce((acc: Record<string, number>, r) => {
           const s = r.status as string;
           acc[s] = (acc[s] || 0) + 1;
           return acc;
         }, {}),
-        allRecords: await (async () => {
-          const { data: allRows, error: allErr } = await supabase
-            .from('outreach_records')
-            .select('id, status, creator_id');
-          if (allErr) return { error: allErr.message };
-          const breakdown: Record<string, number> = {};
-          for (const r of (allRows ?? [])) {
-            const s = r.status as string;
-            breakdown[s] = (breakdown[s] || 0) + 1;
-          }
-          return { totalRows: (allRows ?? []).length, statusBreakdown: breakdown };
-        })(),
       },
     });
   } catch (error) {
