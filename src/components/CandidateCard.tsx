@@ -8,15 +8,17 @@ import { useState } from 'react';
 import ScoreBreakdown from './ScoreBreakdown';
 import type { CandidateCard as CandidateCardType } from '@/types';
 import { getScoreColor, getScoreLabel, getReachLabel, getReachLabelColor } from '@/lib/scoring';
+import { getAmbassadorTier, type TierCosts } from '@/lib/ambassador-tiers';
 
 interface Props {
   candidate: CandidateCardType;
   onApprove: () => void;
   onSkip: () => void;
   followerRange?: { min: number; max: number };
+  tierCosts?: TierCosts;
 }
 
-export default function CandidateCard({ candidate, onApprove, onSkip, followerRange }: Props) {
+export default function CandidateCard({ candidate, onApprove, onSkip, followerRange, tierCosts }: Props) {
   const { creator, score, top_hashtags, rank } = candidate;
   const [showDetails, setShowDetails] = useState(false);
   const scoreColor = getScoreColor(score.overall_score);
@@ -27,6 +29,9 @@ export default function CandidateCard({ candidate, onApprove, onSkip, followerRa
     ? getReachLabel(creator.followers_count, followerRange.min, followerRange.max)
     : null;
   const reachColor = reachLabel ? getReachLabelColor(reachLabel) : '';
+
+  // Calculate ambassador tier and cost
+  const tier = getAmbassadorTier(creator.followers_count, tierCosts);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden
@@ -74,6 +79,10 @@ export default function CandidateCard({ candidate, onApprove, onSkip, followerRa
                       {reachLabel}
                     </span>
                   )}
+                  {/* Tier + Cost Badge */}
+                  <span className={`px-2 py-0.5 text-xs rounded-full font-medium border ${tier.color}`}>
+                    {tier.name} · ${tier.cost}
+                  </span>
                 </div>
                 {creator.full_name && (
                   <p className="text-sm text-gray-500">{creator.full_name}</p>
