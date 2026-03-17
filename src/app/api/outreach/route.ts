@@ -3,6 +3,7 @@
 // ============================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
+import { calculatePipelineCost } from '@/lib/ambassador-tiers';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,19 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const supabase = createServerClient();
+
+    // Fetch tier costs from brand_config
+    const { data: brand_config } = await supabase
+      .from('brand_config')
+      .select('tier_cost_high_profile, tier_cost_brand_ambassador, tier_cost_community_ambassador')
+      .limit(1)
+      .single();
+
+    const tierCosts = {
+      high_profile: brand_config?.tier_cost_high_profile ?? 300,
+      brand_ambassador: brand_config?.tier_cost_brand_ambassador ?? 200,
+      community_ambassador: brand_config?.tier_cost_community_ambassador ?? 50,
+    };
 
     // Fetch outreach records that have been approved (not skipped, not just presented)
     const { data: records, error } = await supabase
@@ -53,7 +67,7 @@ export async function GET() {
     }
 
     if (!records || records.length === 0) {
-      return NextResponse.json({ items: [], total: 0 });
+      return NextResponse.json({ items: [], total: 0, tierCosts, pipelineCost: { total: 0, breakdown: { high_profile: { count: 0, subtotal: 0 }, brand_ambassador: { count: 0, subtotal: 0 }, community_ambassador: { count: 0, subtotal: 0 } } } });
     }
 
     // Fetch scores separately (no direct FK from outreach_records to creator_scores)
@@ -104,7 +118,14 @@ export async function GET() {
       };
     }).filter(Boolean);
 
-    return NextResponse.json({ items, total: items.length });
+    // Calculate pipeline cost from the items (using followers + status)
+    const creatorsForCost = items.map((item: Record<string, unknown>) => ({
+      followers_count: (item.followers as number) || 0,
+      status: item.status as string,
+    }));
+    const pipelineCost = calculatePipelineCost(creatorsForCost, tierCosts);
+
+    return NextResponse.json({ items, total: items.length, tierCosts, pipelineCost });
   } catch (error) {
     console.error('[Outreach] Error:', error);
     return NextResponse.json({ error: 'Failed to load outreach pipeline.' }, { status: 500 });
