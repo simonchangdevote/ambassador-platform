@@ -11,6 +11,7 @@ import type { CandidateCard as CandidateCardType } from '@/types';
 export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<CandidateCardType[]>([]);
   const [followerRange, setFollowerRange] = useState<{ min: number; max: number } | null>(null);
+  const [tierCosts, setTierCosts] = useState<{ high_profile: number; brand_ambassador: number; community_ambassador: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScouting, setIsScouting] = useState(false);
   const [message, setMessage] = useState('');
@@ -29,6 +30,7 @@ export default function CandidatesPage() {
       if (data.candidates && data.candidates.length > 0) {
         setCandidates(data.candidates);
         if (data.followerRange) setFollowerRange(data.followerRange);
+        if (data.tierCosts) setTierCosts(data.tierCosts);
         setMessage('');
       } else {
         setCandidates([]);
@@ -245,6 +247,7 @@ export default function CandidatesPage() {
             onApprove={() => handleApprove(candidate)}
             onSkip={() => handleSkip(candidate)}
             followerRange={followerRange ?? undefined}
+            tierCosts={tierCosts ?? undefined}
           />
         ))}
       </div>
