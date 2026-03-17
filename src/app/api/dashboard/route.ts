@@ -179,16 +179,6 @@ export async function GET() {
         noResponse,
         onboarded,
       },
-      debug: {
-        totalFromSupabase: (allRecordsRaw ?? []).length,
-        afterFilteringPresented: records.length,
-        uniqueCreatorIds: scouted,
-        statusBreakdown: records.reduce((acc: Record<string, number>, r) => {
-          const s = r.status as string;
-          acc[s] = (acc[s] || 0) + 1;
-          return acc;
-        }, {}),
-      },
     });
   } catch (error) {
     console.error('[Dashboard] Error:', error);
