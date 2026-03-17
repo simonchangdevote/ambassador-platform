@@ -1,187 +1,231 @@
 // ============================================================
-// API: /api/dashboard — Aggregate stats for the dashboard
-//
-// Mental model:
-//   Scouted   = everyone who appeared on Weekly Candidates (unique creators)
-//   Approved  = everyone the user clicked Approve on (permanent milestone)
-//   Then each Outreach Pipeline status is tracked exclusively:
-//   DM Drafted / DM Sent / Replied / Interested / Declined / No Response / Onboarded
+// CANDIDATE CARD — Displays a single creator candidate
+// with score breakdown, reach label, social links, and approve/skip actions
 // ============================================================
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase';
+'use client';
 
-export const dynamic = 'force-dynamic';
+import { useState } from 'react';
+import ScoreBreakdown from './ScoreBreakdown';
+import type { CandidateCard as CandidateCardType } from '@/types';
+import { getScoreColor, getScoreLabel, getReachLabel, getReachLabelColor } from '@/lib/scoring';
+import { getAmbassadorTier, type TierCosts } from '@/lib/ambassador-tiers';
 
-export async function GET() {
-  try {
-    const supabase = createServerClient();
+interface Props {
+  candidate: CandidateCardType;
+  onApprove: () => void;
+  onSkip: () => void;
+  followerRange?: { min: number; max: number };
+  tierCosts?: TierCosts;
+}
 
-    // Fetch ALL records then filter in JS to avoid Supabase query filter issues
-    const { data: allRecordsRaw, error } = await supabase
-      .from('outreach_records')
-      .select('id, status, creator_id, updated_at');
+export default function CandidateCard({ candidate, onApprove, onSkip, followerRange, tierCosts }: Props) {
+  const { creator, score, top_hashtags, rank } = candidate;
+  const [showDetails, setShowDetails] = useState(false);
+  const scoreColor = getScoreColor(score.overall_score);
+  const scoreLabel = getScoreLabel(score.overall_score);
 
-    if (error) {
-      console.error('[Dashboard] Query error:', error);
-      return NextResponse.json({ error: 'Failed to load dashboard stats.' }, { status: 500 });
-    }
+  // Calculate reach label from filter range
+  const reachLabel = followerRange
+    ? getReachLabel(creator.followers_count, followerRange.min, followerRange.max)
+    : null;
+  const reachColor = reachLabel ? getReachLabelColor(reachLabel) : '';
 
-    // Filter out 'presented' in JavaScript instead of Supabase
-    const records = (allRecordsRaw ?? []).filter(r => r.status !== 'presented');
+  // Calculate ambassador tier and cost
+  const tier = getAmbassadorTier(creator.followers_count, tierCosts);
 
-    // Scouted = unique creators the user has acted on (approved + skipped)
-    const uniqueCreators = new Set(records.map(r => r.creator_id));
-    const scouted = uniqueCreators.size;
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden
+                    hover:border-brand-300 transition-colors">
+      <div className="p-6">
+        {/* Top Row: Rank + Profile + Score + Actions */}
+        <div className="flex items-start gap-6">
+          {/* Rank Badge */}
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-brand-100 text-brand-700
+                         flex items-center justify-center font-bold text-lg">
+            {rank}
+          </div>
 
-    // Pending review = 0 here (we don't count presented in this query)
-    // The candidates page handles pending review separately
-    const pendingReview = 0;
+          {/* Profile Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3">
+              {/* Profile Pic Placeholder */}
+              <div className="w-12 h-12 rounded-full bg-gray-200 flex-shrink-0 flex items-center
+                             justify-center text-gray-400 text-lg font-bold">
+                {creator.instagram_username.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-gray-900">
+                    @{creator.instagram_username}
+                    {creator.is_verified && (
+                      <span className="ml-1 text-blue-500" title="Instagram Verified">✓</span>
+                    )}
+                  </h3>
+                  {/* Profile Verification Badge */}
+                  {creator.is_profile_verified ? (
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs
+                                     rounded-full font-medium" title="Profile confirmed to exist">
+                      Verified Profile
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs
+                                     rounded-full font-medium" title="Profile not yet verified">
+                      Unverified
+                    </span>
+                  )}
+                  {/* Reach Label */}
+                  {reachLabel && (
+                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium border ${reachColor}`}>
+                      {reachLabel}
+                    </span>
+                  )}
+                  {/* Tier + Cost Badge */}
+                  <span className={`px-2 py-0.5 text-xs rounded-full font-medium border ${tier.color}`}>
+                    {tier.name} · ${tier.cost}
+                  </span>
+                </div>
+                {creator.full_name && (
+                  <p className="text-sm text-gray-500">{creator.full_name}</p>
+                )}
+              </div>
+            </div>
 
-    // Skipped by current status
-    const skipped = records.filter(r => r.status === 'skipped').length;
+            {/* Bio */}
+            {creator.bio && (
+              <p className="mt-2 text-sm text-gray-600 line-clamp-2">{creator.bio}</p>
+            )}
 
-    // Pipeline records = everything in the outreach pipeline (non-skipped)
-    const pipelineRecords = records.filter(r => r.status !== 'skipped');
+            {/* Quick Stats */}
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <Stat label="Followers" value={formatNumber(creator.followers_count)} />
+              <Stat label="Engagement" value={`${creator.engagement_rate?.toFixed(1)}%`} />
+              <Stat label="Avg Reel Views" value={formatNumber(creator.avg_reel_views ?? 0)} />
+              <Stat label="Reels" value={`${creator.reels_percentage?.toFixed(0)}%`} />
+            </div>
 
-    // Approved = total pipeline creators (permanent milestone — everyone user clicked Approve on)
-    const totalApproved = pipelineRecords.length;
+            {/* Social Media Links */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {creator.instagram_url && (
+                <SocialLink
+                  platform="Instagram"
+                  url={creator.instagram_url}
+                  color="bg-gradient-to-r from-purple-500 to-pink-500"
+                />
+              )}
+              {creator.facebook_url && (
+                <SocialLink
+                  platform="Facebook"
+                  url={creator.facebook_url}
+                  color="bg-blue-600"
+                />
+              )}
+              {creator.tiktok_url && (
+                <SocialLink
+                  platform="TikTok"
+                  url={creator.tiktok_url}
+                  color="bg-gray-900"
+                />
+              )}
+              {creator.youtube_url && (
+                <SocialLink
+                  platform="YouTube"
+                  url={creator.youtube_url}
+                  color="bg-red-600"
+                />
+              )}
+            </div>
 
-    // Current exclusive status counts from the Outreach Pipeline
-    const currentCounts: Record<string, number> = {};
-    for (const r of pipelineRecords) {
-      const s = r.status as string;
-      currentCounts[s] = (currentCounts[s] || 0) + 1;
-    }
+            {/* Hashtags */}
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {top_hashtags.slice(0, 6).map(tag => (
+                <span
+                  key={tag}
+                  className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          </div>
 
-    const dmDrafted = (currentCounts['approved'] || 0) + (currentCounts['dm_drafted'] || 0);
-    const dmSent = currentCounts['dm_sent'] || 0;
-    const replied = currentCounts['replied'] || 0;
-    const interested = currentCounts['interested'] || 0;
-    const declined = currentCounts['declined'] || 0;
-    const noResponse = currentCounts['no_response'] || 0;
-    const onboarded = currentCounts['onboarded'] || 0;
+          {/* Score + Actions */}
+          <div className="flex-shrink-0 flex flex-col items-end gap-3">
+            {/* Overall Score */}
+            <div className={`px-4 py-2 rounded-xl text-center ${scoreColor}`}>
+              <div className="text-2xl font-bold">{score.overall_score.toFixed(1)}</div>
+              <div className="text-xs font-medium">{scoreLabel}</div>
+            </div>
 
-    console.log('[Dashboard] Scouted:', scouted, 'Skipped:', skipped, 'Approved:', totalApproved);
-    console.log('[Dashboard] Pipeline statuses:', currentCounts);
+            {/* Action Buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={onApprove}
+                className="px-4 py-2 bg-emerald-600 text-white text-sm font-medium
+                          rounded-lg hover:bg-emerald-700 transition-colors"
+              >
+                Approve &amp; Send DM
+              </button>
+              <button
+                onClick={onSkip}
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700
+                          text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Skip
+              </button>
+            </div>
 
-    // Stats cards — match Outreach Pipeline status names exactly
-    const stats = [
-      {
-        label: 'Scouted',
-        value: scouted,
-        change: scouted > 0 ? `${skipped} skipped, ${totalApproved} approved` : 'No candidates yet',
-        color: 'text-gray-900',
-      },
-      {
-        label: 'Approved',
-        value: totalApproved,
-        change: skipped > 0 ? `${skipped} skipped` : 'All approved',
-        color: 'text-blue-600',
-      },
-      {
-        label: 'DM Drafted',
-        value: dmDrafted,
-        change: dmDrafted > 0 ? 'Ready to send' : 'None yet',
-        color: 'text-indigo-600',
-      },
-      {
-        label: 'DM Sent',
-        value: dmSent,
-        change: dmSent > 0 ? 'Awaiting replies' : 'None sent yet',
-        color: 'text-purple-600',
-      },
-      {
-        label: 'Replied',
-        value: replied,
-        change: replied > 0 ? 'Awaiting follow-up' : 'None yet',
-        color: 'text-amber-600',
-      },
-      {
-        label: 'Interested',
-        value: interested,
-        change: interested > 0 ? 'Ready to onboard' : 'None yet',
-        color: 'text-emerald-600',
-      },
-      {
-        label: 'Declined',
-        value: declined,
-        change: declined > 0 ? `${declined} declined` : 'None',
-        color: 'text-red-600',
-      },
-      {
-        label: 'No Response',
-        value: noResponse,
-        change: noResponse > 0 ? `${noResponse} awaiting` : 'None',
-        color: 'text-gray-500',
-      },
-      {
-        label: 'Onboarded',
-        value: onboarded,
-        change: onboarded > 0 ? `${Math.round(onboarded / Math.max(totalApproved, 1) * 100)}% conversion` : 'None yet',
-        color: 'text-ocean-600',
-      },
-    ];
+            {/* Toggle Details */}
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="text-xs text-brand-600 hover:text-brand-700"
+            >
+              {showDetails ? 'Hide' : 'Show'} score breakdown
+            </button>
+          </div>
+        </div>
+      </div>
 
-    // Pipeline funnel
-    const maxCount = Math.max(scouted, 1);
-    const pipeline = [
-      { label: 'Scouted', count: scouted, color: 'bg-gray-400', percent: 100 },
-      { label: 'Skipped', count: skipped, color: 'bg-gray-300', percent: Math.round(skipped / maxCount * 100) },
-      { label: 'Approved', count: totalApproved, color: 'bg-blue-500', percent: Math.round(totalApproved / maxCount * 100) },
-      { label: 'DM Drafted', count: dmDrafted, color: 'bg-indigo-400', percent: Math.round(dmDrafted / maxCount * 100) },
-      { label: 'DM Sent', count: dmSent, color: 'bg-purple-500', percent: Math.round(dmSent / maxCount * 100) },
-      { label: 'Replied', count: replied, color: 'bg-amber-500', percent: Math.round(replied / maxCount * 100) },
-      { label: 'Interested', count: interested, color: 'bg-emerald-500', percent: Math.round(interested / maxCount * 100) },
-      { label: 'Declined', count: declined, color: 'bg-red-400', percent: Math.round(declined / maxCount * 100) },
-      { label: 'No Response', count: noResponse, color: 'bg-gray-300', percent: Math.round(noResponse / maxCount * 100) },
-      { label: 'Onboarded', count: onboarded, color: 'bg-ocean-500', percent: Math.round(onboarded / maxCount * 100) },
-    ];
+      {/* Expandable Score Breakdown */}
+      {showDetails && (
+        <div className="border-t border-gray-100 px-6 py-4 bg-gray-50">
+          <ScoreBreakdown
+            score={score}
+            followers={creator.followers_count}
+            minFilter={followerRange?.min}
+            maxFilter={followerRange?.max}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
-    // Recent activity
-    const recentRecords = records
-      .filter(r => r.status !== 'presented')
-      .sort((a, b) => new Date(b.updated_at as string).getTime() - new Date(a.updated_at as string).getTime())
-      .slice(0, 5);
+/** Social media link button */
+function SocialLink({ platform, url, color }: { platform: string; url: string; color: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`px-3 py-1 ${color} text-white text-xs font-medium rounded-full
+                 hover:opacity-90 transition-opacity`}
+    >
+      {platform} ↗
+    </a>
+  );
+}
 
-    let recentActivity: { status: string; username: string; updatedAt: string }[] = [];
-    if (recentRecords.length > 0) {
-      const creatorIds = recentRecords.map(r => r.creator_id);
-      const { data: creators } = await supabase
-        .from('creators')
-        .select('id, instagram_username')
-        .in('id', creatorIds as string[]);
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="text-gray-400">{label}: </span>
+      <span className="font-medium text-gray-700">{value}</span>
+    </div>
+  );
+}
 
-      const creatorMap = new Map(
-        (creators ?? []).map((c: { id: string; instagram_username: string }) => [c.id, c.instagram_username])
-      );
-
-      recentActivity = recentRecords.map(r => ({
-        status: r.status as string,
-        username: creatorMap.get(r.creator_id as string) || 'Unknown',
-        updatedAt: r.updated_at as string,
-      }));
-    }
-
-    return NextResponse.json({
-      stats,
-      pipeline,
-      recentActivity,
-      summary: {
-        totalCreators: scouted,
-        pendingReview,
-        approved: totalApproved,
-        skipped,
-        dmDrafted,
-        dmSent,
-        replied,
-        interested,
-        declined,
-        noResponse,
-        onboarded,
-      },
-    });
-  } catch (error) {
-    console.error('[Dashboard] Error:', error);
-    return NextResponse.json({ error: 'Failed to load dashboard.' }, { status: 500 });
-  }
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }
