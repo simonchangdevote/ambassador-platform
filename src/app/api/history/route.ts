@@ -14,7 +14,7 @@ export async function GET() {
     const { data: countCheck, error: countError } = await supabase
       .from('outreach_records')
       .select('id, status, creator_id')
-      .in('status', ['approved', 'skipped', 'dm_drafted', 'dm_sent', 'replied', 'interested', 'declined', 'no_response', 'onboarded']);
+      .neq('status', 'presented');
 
     console.log('[History] Records with acted-on status:', countCheck?.length ?? 0);
     if (countCheck && countCheck.length > 0) {
@@ -61,7 +61,7 @@ export async function GET() {
           year
         )
       `)
-      .in('status', ['approved', 'skipped', 'dm_drafted', 'dm_sent', 'replied', 'interested', 'declined', 'no_response', 'onboarded'])
+      .neq('status', 'presented')
       .order('updated_at', { ascending: false });
 
     if (error) {
