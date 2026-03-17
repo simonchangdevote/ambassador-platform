@@ -1,16 +1,19 @@
 // ============================================================
 // OUTREACH MESSAGE — Shows DM text with copy button + status tracker
 // Includes quick action buttons: Mark as Sent, Decline
+// Shows ambassador tier badge with cost
 // ============================================================
 'use client';
 
 import { useState } from 'react';
+import { getAmbassadorTier, type TierCosts } from '@/lib/ambassador-tiers';
 import type { OutreachStatus } from '@/types';
 
 interface OutreachItem {
   id: string;
   username: string;
   fullName?: string;
+  followers?: number;
   score: number;
   status: OutreachStatus;
   dmMessage: string;
@@ -28,12 +31,15 @@ interface Props {
   item: OutreachItem;
   statusOptions: StatusOption[];
   onStatusChange: (newStatus: OutreachStatus) => void;
+  tierCosts?: TierCosts;
 }
 
-export default function OutreachMessage({ item, statusOptions, onStatusChange }: Props) {
+export default function OutreachMessage({ item, statusOptions, onStatusChange, tierCosts }: Props) {
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState(item.responseNote ?? '');
   const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
+
+  const tier = getAmbassadorTier(item.followers ?? 0, tierCosts);
 
   async function handleCopy() {
     await navigator.clipboard.writeText(item.dmMessage);
@@ -64,6 +70,18 @@ export default function OutreachMessage({ item, statusOptions, onStatusChange }:
           <span className="text-sm font-medium text-gray-400">
             Score: {item.score.toFixed(1)}/10
           </span>
+          {/* Ambassador Tier Badge */}
+          <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${tier.color}`}>
+            {tier.name} &middot; ${tier.cost}
+          </span>
+          {/* Follower count */}
+          {item.followers != null && (
+            <span className="text-xs text-gray-400">
+              {item.followers >= 1000
+                ? `${(item.followers / 1000).toFixed(1).replace(/\.0$/, '')}K`
+                : item.followers} followers
+            </span>
+          )}
         </div>
 
         {/* Status Dropdown */}
