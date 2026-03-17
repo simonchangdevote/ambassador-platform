@@ -367,7 +367,7 @@ export async function GET() {
       candidates_found: latestBatch?.candidates_found ?? 0,
       apify_configured: !!process.env.APIFY_API_TOKEN,
     });
-  } catch {
+  } catch (err) {
     return NextResponse.json({
       status: 'idle',
       last_run: null,

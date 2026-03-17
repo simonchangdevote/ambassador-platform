@@ -1,23 +1,52 @@
 // ============================================================
-// SCORE BREAKDOWN — Visual breakdown of 3 scoring dimensions
+// SCORE BREAKDOWN — Visual breakdown of scoring dimensions
+// Shows Engagement + Reels scores, plus a Reach Label
 // ============================================================
 
 import type { CreatorScore } from '@/types';
+import { getReachLabel, getReachLabelColor, type ReachLabel } from '@/lib/scoring';
 
 interface Props {
   score: CreatorScore;
+  followers?: number;
+  minFilter?: number;
+  maxFilter?: number;
 }
 
 const DIMENSIONS = [
-  { key: 'engagement_score', label: 'Engagement Rate', weight: '40%', description: 'How engaged their audience is (likes, comments, shares)' },
-  { key: 'audience_size_score', label: 'Audience Size', weight: '30%', description: 'Follower count in the ideal micro-to-mid range (5K–50K sweet spot)' },
-  { key: 'reels_focus_score', label: 'Reels Activity', weight: '30%', description: 'How much video/reel content they produce' },
+  { key: 'engagement_score', label: 'Engagement Rate', weight: '55%', description: 'How engaged their audience is (likes, comments, shares)' },
+  { key: 'reels_focus_score', label: 'Reels Activity', weight: '45%', description: 'How much video/reel content they produce and view performance' },
 ] as const;
 
-export default function ScoreBreakdown({ score }: Props) {
+export default function ScoreBreakdown({ score, followers, minFilter, maxFilter }: Props) {
+  // Calculate reach label if follower data is available
+  let reachLabel: ReachLabel | null = null;
+  let reachColor = '';
+  if (followers !== undefined && minFilter !== undefined && maxFilter !== undefined) {
+    reachLabel = getReachLabel(followers, minFilter, maxFilter);
+    reachColor = getReachLabelColor(reachLabel);
+  }
+
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold text-gray-700">Score Breakdown</h4>
+
+      {/* Reach Label */}
+      {reachLabel && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">Audience Reach:</span>
+          <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full border ${reachColor}`}>
+            {reachLabel}
+          </span>
+          {followers !== undefined && (
+            <span className="text-xs text-gray-400">
+              ({formatFollowers(followers)} followers)
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Score Dimensions */}
       {DIMENSIONS.map(dim => {
         const value = score[dim.key] as number;
         const percentage = (value / 10) * 100;
@@ -45,4 +74,10 @@ export default function ScoreBreakdown({ score }: Props) {
       })}
     </div>
   );
+}
+
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
 }

@@ -224,7 +224,7 @@ export async function fetchCreatorReels(
         caption: post.caption ?? undefined,
         posted_at: new Date().toISOString(),
       }));
-  } catch {
+  } catch (err) {
     return [];
   }
 }

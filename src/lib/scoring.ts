@@ -1,16 +1,16 @@
 // ============================================================
-// AMBASSADOR SCORING ENGINE — Simplified 3-Dimension Ranking
+// AMBASSADOR SCORING ENGINE — 2-Dimension Quality Ranking
 // Hard filters handle niche/location/followers/reels
 // Scoring only RANKS creators who already passed all filters
+// Audience size is NOT scored — it's shown as a Reach Label instead
 // ============================================================
 
 import type { Creator, CreatorScore } from '@/types';
 
 // Fixed internal weights — not configurable, no sliders needed
 const WEIGHTS = {
-  engagement: 0.40,    // Most important: real audience connection
-  audience_size: 0.30, // Sweet spot followers
-  reels_activity: 0.30,// Video content production
+  engagement: 0.55,      // Most important: real audience connection
+  reels_activity: 0.45,  // Video content production
 };
 
 // ============================================================
@@ -34,27 +34,7 @@ export function scoreEngagement(creator: Creator): number {
 }
 
 // ============================================================
-// DIMENSION 2: Audience Size Score (0–10)
-// Sweet spot for micro-to-mid creators
-// ============================================================
-export function scoreAudienceSize(followers: number): number {
-  if (followers < 500) return 0;
-  if (followers < 1000) return 2;
-
-  // Sweet spot: 5K–50K gets highest scores
-  if (followers >= 5000 && followers <= 50000) {
-    const peak = 15000;
-    const distance = Math.abs(followers - peak) / peak;
-    return Math.max(7, 10 - distance * 3);
-  }
-
-  if (followers <= 100000) return 6;
-  if (followers <= 500000) return 4;
-  return 2;
-}
-
-// ============================================================
-// DIMENSION 3: Reels Activity Score (0–10)
+// DIMENSION 2: Reels Activity Score (0–10)
 // Rewards creators who produce video content
 // ============================================================
 export function scoreReelsActivity(creator: Creator): number {
@@ -80,8 +60,49 @@ export function scoreReelsActivity(creator: Creator): number {
 }
 
 // ============================================================
+// REACH LABEL — Based on where followers sit in the filter range
+// Not a score, just a contextual label
+// ============================================================
+export type ReachLabel = 'High Reach' | 'Mid Reach' | 'Emerging Reach';
+
+export function getReachLabel(
+  followers: number,
+  minFilter: number,
+  maxFilter: number
+): ReachLabel {
+  const range = maxFilter - minFilter;
+  if (range <= 0) return 'Mid Reach';
+
+  const position = (followers - minFilter) / range;
+
+  if (position >= 0.66) return 'High Reach';
+  if (position >= 0.33) return 'Mid Reach';
+  return 'Emerging Reach';
+}
+
+/** Get Tailwind classes for reach label styling */
+export function getReachLabelColor(label: ReachLabel): string {
+  switch (label) {
+    case 'High Reach':
+      return 'text-purple-700 bg-purple-50 border-purple-200';
+    case 'Mid Reach':
+      return 'text-blue-700 bg-blue-50 border-blue-200';
+    case 'Emerging Reach':
+      return 'text-teal-700 bg-teal-50 border-teal-200';
+  }
+}
+
+// ============================================================
+// LEGACY: Audience Size Score — kept for DB compatibility
+// Returns 0 since audience size is no longer part of scoring
+// ============================================================
+export function scoreAudienceSize(_followers: number): number {
+  return 0;
+}
+
+// ============================================================
 // OVERALL AMBASSADOR SCORE
-// Weighted average of the 3 dimensions
+// Weighted average of 2 dimensions: Engagement + Reels
 // ============================================================
 export function calculateOverallScore(
   creator: Creator,
@@ -89,8 +110,10 @@ export function calculateOverallScore(
   _keywords: string[] = []
 ): CreatorScore {
   const engagement_score = scoreEngagement(creator);
-  const audience_size_score = scoreAudienceSize(creator.followers_count);
   const reels_focus_score = scoreReelsActivity(creator);
+
+  // Audience size no longer scored — shown as Reach Label instead
+  const audience_size_score = 0;
 
   // brand_fit and content_quality set to 0 — handled by hard filters now
   const content_quality_score = 0;
@@ -98,7 +121,6 @@ export function calculateOverallScore(
 
   const overall_score = Math.round((
     engagement_score * WEIGHTS.engagement +
-    audience_size_score * WEIGHTS.audience_size +
     reels_focus_score * WEIGHTS.reels_activity
   ) * 10) / 10;
 

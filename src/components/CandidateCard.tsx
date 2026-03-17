@@ -1,25 +1,32 @@
 // ============================================================
 // CANDIDATE CARD — Displays a single creator candidate
-// with score breakdown, social links, and approve/skip actions
+// with score breakdown, reach label, social links, and approve/skip actions
 // ============================================================
 'use client';
 
 import { useState } from 'react';
 import ScoreBreakdown from './ScoreBreakdown';
 import type { CandidateCard as CandidateCardType } from '@/types';
-import { getScoreColor, getScoreLabel } from '@/lib/scoring';
+import { getScoreColor, getScoreLabel, getReachLabel, getReachLabelColor } from '@/lib/scoring';
 
 interface Props {
   candidate: CandidateCardType;
   onApprove: () => void;
   onSkip: () => void;
+  followerRange?: { min: number; max: number };
 }
 
-export default function CandidateCard({ candidate, onApprove, onSkip }: Props) {
+export default function CandidateCard({ candidate, onApprove, onSkip, followerRange }: Props) {
   const { creator, score, top_hashtags, rank } = candidate;
   const [showDetails, setShowDetails] = useState(false);
   const scoreColor = getScoreColor(score.overall_score);
   const scoreLabel = getScoreLabel(score.overall_score);
+
+  // Calculate reach label from filter range
+  const reachLabel = followerRange
+    ? getReachLabel(creator.followers_count, followerRange.min, followerRange.max)
+    : null;
+  const reachColor = reachLabel ? getReachLabelColor(reachLabel) : '';
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden
@@ -59,6 +66,12 @@ export default function CandidateCard({ candidate, onApprove, onSkip }: Props) {
                     <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs
                                      rounded-full font-medium" title="Profile not yet verified">
                       Unverified
+                    </span>
+                  )}
+                  {/* Reach Label */}
+                  {reachLabel && (
+                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium border ${reachColor}`}>
+                      {reachLabel}
                     </span>
                   )}
                 </div>
@@ -166,7 +179,12 @@ export default function CandidateCard({ candidate, onApprove, onSkip }: Props) {
       {/* Expandable Score Breakdown */}
       {showDetails && (
         <div className="border-t border-gray-100 px-6 py-4 bg-gray-50">
-          <ScoreBreakdown score={score} />
+          <ScoreBreakdown
+            score={score}
+            followers={creator.followers_count}
+            minFilter={followerRange?.min}
+            maxFilter={followerRange?.max}
+          />
         </div>
       )}
     </div>

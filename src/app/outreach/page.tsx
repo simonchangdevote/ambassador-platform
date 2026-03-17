@@ -55,7 +55,7 @@ export default function OutreachPage() {
       }
 
       setItems(data.items ?? []);
-    } catch {
+    } catch (err) {
       setError('Failed to load outreach pipeline. Please try again.');
     } finally {
       setIsLoading(false);

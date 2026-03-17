@@ -10,6 +10,7 @@ import type { CandidateCard as CandidateCardType } from '@/types';
 
 export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<CandidateCardType[]>([]);
+  const [followerRange, setFollowerRange] = useState<{ min: number; max: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScouting, setIsScouting] = useState(false);
   const [message, setMessage] = useState('');
@@ -27,6 +28,7 @@ export default function CandidatesPage() {
       const data = await res.json();
       if (data.candidates && data.candidates.length > 0) {
         setCandidates(data.candidates);
+        if (data.followerRange) setFollowerRange(data.followerRange);
         setMessage('');
       } else {
         setCandidates([]);
@@ -34,7 +36,7 @@ export default function CandidatesPage() {
           data.message || 'No candidates yet. Click "Refresh — Find New Ambassadors" to scout Instagram.'
         );
       }
-    } catch {
+    } catch (err) {
       setMessage('Failed to load candidates. Please try again.');
     } finally {
       setIsLoading(false);
@@ -82,7 +84,7 @@ export default function CandidatesPage() {
           });
         }
       }
-    } catch {
+    } catch (err) {
       alert('Failed to approve candidate. Please try again.');
     }
   }
@@ -109,7 +111,7 @@ export default function CandidatesPage() {
           )
         );
       }
-    } catch {
+    } catch (err) {
       alert('Failed to skip candidate. Please try again.');
     }
   }
@@ -128,7 +130,7 @@ export default function CandidatesPage() {
       } else {
         setMessage(data.error || 'Scouting failed. Check your Apify API token in Vercel settings.');
       }
-    } catch {
+    } catch (err) {
       setMessage('Scouting failed. Please check your connection and try again.');
     } finally {
       setIsScouting(false);
@@ -240,6 +242,7 @@ export default function CandidatesPage() {
             candidate={candidate}
             onApprove={() => handleApprove(candidate)}
             onSkip={() => handleSkip(candidate)}
+            followerRange={followerRange ?? undefined}
           />
         ))}
       </div>

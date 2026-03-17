@@ -24,7 +24,7 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadSettings() {
       try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', { cache: 'no-store' });
         const data = await res.json();
         if (data.config) {
           const c = data.config;
@@ -78,7 +78,7 @@ export default function SettingsPage() {
       } else {
         setSaveMessage('Error: ' + (data.error || 'Failed to save settings.'));
       }
-    } catch {
+    } catch (err) {
       setSaveMessage('Failed to save settings. Please try again.');
     } finally {
       setIsSaving(false);
