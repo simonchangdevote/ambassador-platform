@@ -28,6 +28,9 @@ export async function GET() {
           target_follower_max: 500000,
           min_reels: 5,
           outreach_message_template: '',
+          tier_cost_high_profile: 300,
+          tier_cost_brand_ambassador: 200,
+          tier_cost_community_ambassador: 50,
         },
         is_default: true,
       });
@@ -62,6 +65,9 @@ export async function POST(request: NextRequest) {
       target_follower_max: body.target_follower_max ?? 500000,
       min_reels: body.min_reels ?? 5,
       outreach_message_template: body.outreach_message_template ?? '',
+      tier_cost_high_profile: body.tier_cost_high_profile ?? 300,
+      tier_cost_brand_ambassador: body.tier_cost_brand_ambassador ?? 200,
+      tier_cost_community_ambassador: body.tier_cost_community_ambassador ?? 50,
       updated_at: new Date().toISOString(),
     };
 
