@@ -78,7 +78,7 @@ export default function SettingsPage() {
       } else {
         setSaveMessage('Error: ' + (data.error || 'Failed to save settings.'));
       }
-    } catch {
+    } catch (err) {
       setSaveMessage('Failed to save settings. Please try again.');
     } finally {
       setIsSaving(false);
@@ -148,19 +148,40 @@ export default function SettingsPage() {
 
       {/* How ranking works */}
       <Section title="How Ranking Works"
-               description="Creators who pass all filters are ranked automatically by:">
-        <div className="space-y-2 text-sm text-gray-600">
+               description="Creators who pass all filters are ranked by content quality, not audience size:">
+        <div className="space-y-3 text-sm text-gray-600">
           <div className="flex items-center gap-3">
-            <span className="w-16 text-right font-semibold text-brand-600">40%</span>
-            <span>Engagement Rate — how engaged their audience is</span>
+            <span className="w-16 text-right font-semibold text-brand-600">55%</span>
+            <span>Engagement Rate — how actively their audience interacts (likes, comments, shares)</span>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="w-16 text-right font-semibold text-brand-600">30%</span>
-            <span>Audience Size — sweet spot scoring (5K–50K ideal)</span>
+          <div className="flex items-start gap-3">
+            <span className="w-16 text-right font-semibold text-brand-600 pt-0.5">45%</span>
+            <div>
+              <span>Reels Activity — what percentage of their posts are video Reels</span>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Creators posting 80%+ Reels score highest. Bonus point if their average Reel views exceed 50% of their follower count (videos actually get watched, not just posted).
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="w-16 text-right font-semibold text-brand-600">30%</span>
-            <span>Reels Activity — how much video content they produce</span>
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Audience Reach Labels</p>
+            <p className="text-xs text-gray-500 mb-2">
+              Your follower filter range ({parseInt(minFollowers).toLocaleString()} – {parseInt(maxFollowers).toLocaleString()}) is split into three equal thirds. Each creator gets a label based on where their follower count falls:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border text-purple-700 bg-purple-50 border-purple-200">
+                High Reach — upper third ({Math.round(parseInt(minFollowers) + (parseInt(maxFollowers) - parseInt(minFollowers)) * 0.66).toLocaleString()}+)
+              </span>
+              <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border text-blue-700 bg-blue-50 border-blue-200">
+                Mid Reach — middle third
+              </span>
+              <span className="px-2.5 py-0.5 text-xs font-medium rounded-full border text-teal-700 bg-teal-50 border-teal-200">
+                Emerging Reach — lower third (under {Math.round(parseInt(minFollowers) + (parseInt(maxFollowers) - parseInt(minFollowers)) * 0.33).toLocaleString()})
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              These labels don&apos;t affect the score — they&apos;re a quick visual so you can see if a creator is on the smaller or larger end of your filter range.
+            </p>
           </div>
         </div>
       </Section>
