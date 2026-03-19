@@ -112,7 +112,7 @@ export async function GET() {
       // Re-assign ranks after sorting
       .map((c: CandidateCard, i: number) => ({ ...c, rank: i + 1 }));
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       candidates,
       has_batch: true,
       batch_id: batch.id,
@@ -121,6 +121,10 @@ export async function GET() {
       followerRange,
       tierCosts,
     });
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    return response;
   } catch (error) {
     console.error('[Candidates] Error:', error);
     return NextResponse.json(

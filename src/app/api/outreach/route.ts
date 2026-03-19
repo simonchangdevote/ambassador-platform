@@ -125,7 +125,11 @@ export async function GET() {
     }));
     const pipelineCost = calculatePipelineCost(creatorsForCost, tierCosts);
 
-    return NextResponse.json({ items, total: items.length, tierCosts, pipelineCost });
+    const response = NextResponse.json({ items, total: items.length, tierCosts, pipelineCost });
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    return response;
   } catch (error) {
     console.error('[Outreach] Error:', error);
     return NextResponse.json({ error: 'Failed to load outreach pipeline.' }, { status: 500 });

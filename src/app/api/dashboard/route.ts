@@ -203,7 +203,7 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       stats,
       pipeline,
       recentActivity,
@@ -223,6 +223,12 @@ export async function GET() {
         onboarded,
       },
     });
+
+    // Prevent Vercel edge and browser caching
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    return response;
   } catch (error) {
     console.error('[Dashboard] Error:', error);
     return NextResponse.json({ error: 'Failed to load dashboard.' }, { status: 500 });

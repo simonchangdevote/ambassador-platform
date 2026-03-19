@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import OutreachMessage from '@/components/OutreachMessage';
+import { getAmbassadorTier, type TierCosts } from '@/lib/ambassador-tiers';
 import type { OutreachStatus } from '@/types';
 
 interface OutreachItem {
@@ -25,6 +26,15 @@ interface OutreachItem {
   updatedAt?: string;
 }
 
+interface PipelineCost {
+  total: number;
+  breakdown: {
+    high_profile: { count: number; subtotal: number };
+    brand_ambassador: { count: number; subtotal: number };
+    community_ambassador: { count: number; subtotal: number };
+  };
+}
+
 const STATUS_OPTIONS: { value: OutreachStatus; label: string; color: string }[] = [
   { value: 'approved', label: 'Ready to Send', color: 'bg-blue-100 text-blue-700' },
   { value: 'dm_drafted', label: 'DM Drafted', color: 'bg-indigo-100 text-indigo-700' },
@@ -41,6 +51,8 @@ export default function OutreachPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<OutreachStatus | 'all'>('all');
+  const [tierCosts, setTierCosts] = useState<TierCosts | null>(null);
+  const [pipelineCost, setPipelineCost] = useState<PipelineCost | null>(null);
 
   const fetchOutreach = useCallback(async () => {
     setIsLoading(true);
@@ -55,6 +67,8 @@ export default function OutreachPage() {
       }
 
       setItems(data.items ?? []);
+      setTierCosts(data.tierCosts ?? null);
+      setPipelineCost(data.pipelineCost ?? null);
     } catch (err) {
       setError('Failed to load outreach pipeline. Please try again.');
     } finally {
@@ -94,6 +108,29 @@ export default function OutreachPage() {
               : item
           )
         );
+
+        // Recalculate pipeline cost locally after status change
+        // (declined/skipped drop out of the cost)
+        if (tierCosts) {
+          const updatedItems = items.map(item =>
+            item.id === id ? { ...item, status: newStatus } : item
+          );
+          const EXCLUDED = ['skipped', 'declined'];
+          let total = 0;
+          const breakdown = {
+            high_profile: { count: 0, subtotal: 0 },
+            brand_ambassador: { count: 0, subtotal: 0 },
+            community_ambassador: { count: 0, subtotal: 0 },
+          };
+          for (const item of updatedItems) {
+            if (EXCLUDED.includes(item.status)) continue;
+            const tier = getAmbassadorTier(item.followers ?? 0, tierCosts);
+            breakdown[tier.key].count++;
+            breakdown[tier.key].subtotal += tier.cost;
+            total += tier.cost;
+          }
+          setPipelineCost({ total, breakdown });
+        }
       } else {
         console.error('[Outreach] Save failed:', data);
         alert('Failed to update status. Please try again.');
@@ -117,6 +154,45 @@ export default function OutreachPage() {
             : 'Manage your DM outreach and track creator responses.'}
         </p>
       </div>
+
+      {/* Pipeline Cost */}
+      {pipelineCost && pipelineCost.total > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">Pipeline Cost</h2>
+              <p className="text-sm text-gray-500">Estimated cost for all active creators (excludes skipped &amp; declined)</p>
+            </div>
+            <div className="text-right">
+              <div className="text-3xl font-bold text-gray-900">${pipelineCost.total.toLocaleString()}</div>
+              <div className="text-xs text-gray-400">total per video cycle</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {pipelineCost.breakdown.high_profile.count > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="text-xs font-medium text-amber-700">High Profile</div>
+                <div className="text-lg font-bold text-amber-800">${pipelineCost.breakdown.high_profile.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-amber-600">{pipelineCost.breakdown.high_profile.count} creator{pipelineCost.breakdown.high_profile.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+            {pipelineCost.breakdown.brand_ambassador.count > 0 && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <div className="text-xs font-medium text-blue-700">Brand Ambassador</div>
+                <div className="text-lg font-bold text-blue-800">${pipelineCost.breakdown.brand_ambassador.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-blue-600">{pipelineCost.breakdown.brand_ambassador.count} creator{pipelineCost.breakdown.brand_ambassador.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+            {pipelineCost.breakdown.community_ambassador.count > 0 && (
+              <div className="rounded-lg border border-teal-200 bg-teal-50 p-3">
+                <div className="text-xs font-medium text-teal-700">Community Ambassador</div>
+                <div className="text-lg font-bold text-teal-800">${pipelineCost.breakdown.community_ambassador.subtotal.toLocaleString()}</div>
+                <div className="text-xs text-teal-600">{pipelineCost.breakdown.community_ambassador.count} creator{pipelineCost.breakdown.community_ambassador.count !== 1 ? 's' : ''}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Status Filters */}
       <div className="flex flex-wrap gap-2 mb-6">
@@ -183,6 +259,7 @@ export default function OutreachPage() {
               item={item}
               statusOptions={STATUS_OPTIONS}
               onStatusChange={(newStatus) => updateStatus(item.id, newStatus)}
+              tierCosts={tierCosts ?? undefined}
             />
           ))}
           {filtered.length === 0 && items.length > 0 && (
