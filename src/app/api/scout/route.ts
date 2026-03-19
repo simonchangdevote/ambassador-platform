@@ -204,21 +204,28 @@ export async function POST() {
         }
 
         // --- FILTER 2: Location tag ---
+        // Only check the creator's OWN profile data (hashtags, bio, captions)
+        // NOT source_hashtags — those come from discovery posts, not the creator's profile,
+        // so they don't indicate where the creator is actually from.
         if (locationTags.length > 0) {
-          const allTags = [
-            ...(creator.recent_hashtags ?? []),
-            ...(creator.source_hashtags ?? []),
-          ].map(h => h.toLowerCase().replace(/^#/, ''));
+          const profileTags = (creator.recent_hashtags ?? [])
+            .map(h => h.toLowerCase().replace(/^#/, ''));
           const bio = (creator.bio ?? '').toLowerCase();
           const captionText = (creator.recent_captions ?? []).join(' ').toLowerCase();
 
           const matchesLocation = locLower.some(loc =>
-            allTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
+            profileTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
           );
 
           if (!matchesLocation) {
-            console.log(`[Scout] ✗ @${creator.instagram_username} — no location match`);
+            console.log(`[Scout] ✗ @${creator.instagram_username} — no location match in profile/bio/captions`);
             continue;
+          } else {
+            // Log what matched so we can verify location filtering is working
+            const matchedOn = locLower.filter(loc =>
+              profileTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
+            );
+            console.log(`[Scout] ✓ @${creator.instagram_username} — location match: [${matchedOn.join(', ')}]`);
           }
         }
 
