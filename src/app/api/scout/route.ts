@@ -82,8 +82,13 @@ export async function POST() {
     }
 
     // ----- STEP 2: Search Instagram via Apify -----
-    const posts = await scoutByHashtags(searchHashtags, 200);
-    console.log(`[Scout] Found ${posts.length} total posts`);
+    // 50 posts per hashtag keeps the search under 90s total,
+    // leaving enough time for profile verification
+    const postsPerTag = 50;
+    const searchStart = Date.now();
+    const posts = await scoutByHashtags(searchHashtags, postsPerTag);
+    const searchElapsed = Math.round((Date.now() - searchStart) / 1000);
+    console.log(`[Scout] Found ${posts.length} total posts (${searchElapsed}s for hashtag search)`);
 
     if (posts.length === 0) {
       await supabase.from('weekly_batches')
