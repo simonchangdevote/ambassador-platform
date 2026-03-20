@@ -18,6 +18,66 @@ const TARGET_CANDIDATES = 10;  // Stop when we have this many qualified creators
 const MAX_TIME_MS = 240000;     // 240 seconds — leaves 60s buffer for Vercel's 300s limit
 const PROFILE_TIMEOUT_MS = 20000; // 20 seconds max per profile verification
 
+// ============================================================
+// HELPERS: Location & niche matching
+// ============================================================
+
+/**
+ * Check if a location term matches inside a hashtag.
+ * Short terms (≤4 chars: sa, wa, vic, qld, nsw) must EXACTLY match the hashtag.
+ * Longer terms (australia, sydney, etc.) use substring matching.
+ */
+function matchesLocationInHashtag(loc: string, tag: string): boolean {
+  if (loc.length <= 4) {
+    return tag === loc;
+  }
+  return tag.includes(loc);
+}
+
+/**
+ * Check if a location term matches inside free text (bio, captions).
+ * Short terms use word boundary regex to avoid false positives
+ * (e.g. "wa" should NOT match "water" or "away").
+ * Longer terms use substring matching.
+ */
+function matchesLocationInText(loc: string, text: string): boolean {
+  if (loc.length <= 4) {
+    const regex = new RegExp(`\\b${loc}\\b`, 'i');
+    return regex.test(text);
+  }
+  return text.includes(loc);
+}
+
+/**
+ * Derive niche keywords from search hashtags.
+ * Strips location suffixes and adds core spearfishing terms.
+ * Used to verify a creator actually posts niche content.
+ */
+function deriveNicheTerms(searchHashtags: string[]): string[] {
+  // Derive niche terms purely from the search hashtags in Settings.
+  // No hardcoded terms — if you change your search hashtags, the
+  // niche filter automatically adjusts.
+  const locationSuffixes = ['australia', 'australian', 'aus', 'nz', 'uk', 'usa'];
+  const terms: string[] = [];
+
+  for (const h of searchHashtags) {
+    const raw = h.toLowerCase().replace(/^#/, '');
+    terms.push(raw); // Keep the original hashtag as a term
+
+    // Also strip location suffixes to get the root term
+    // e.g. "spearfishingaustralia" → "spearfishing"
+    let stripped = raw;
+    for (const suffix of locationSuffixes) {
+      stripped = stripped.replace(suffix, '');
+    }
+    if (stripped.length > 2 && stripped !== raw) {
+      terms.push(stripped);
+    }
+  }
+
+  return [...new Set(terms)];
+}
+
 export async function POST() {
   try {
     const apifyToken = process.env.APIFY_API_TOKEN;
@@ -46,9 +106,13 @@ export async function POST() {
     const maxFollowers = brandConfig?.target_follower_max ?? 500000;
     const minReels = brandConfig?.min_reels ?? 5;
 
+    // Derive niche keywords from search hashtags for content relevance checking
+    const nicheTerms = deriveNicheTerms(searchHashtags);
+
     console.log(`[Scout] === CONFIG ===`);
     console.log(`[Scout] Search hashtags: [${searchHashtags.join(', ')}]`);
     console.log(`[Scout] Location tags: [${locationTags.join(', ')}]`);
+    console.log(`[Scout] Niche terms: [${nicheTerms.join(', ')}]`);
     console.log(`[Scout] Followers: ${minFollowers}–${maxFollowers}`);
     console.log(`[Scout] Min reels: ${minReels}`);
     console.log(`[Scout] Target: ${TARGET_CANDIDATES} qualified creators`);
@@ -81,32 +145,8 @@ export async function POST() {
       );
     }
 
-    // ----- STEP 2: Search Instagram via Apify -----
-    // 50 posts per hashtag keeps the search under 90s total,
-    // leaving enough time for profile verification
-    const postsPerTag = 50;
-    const searchStart = Date.now();
-    const posts = await scoutByHashtags(searchHashtags, postsPerTag);
-    const searchElapsed = Math.round((Date.now() - searchStart) / 1000);
-    console.log(`[Scout] Found ${posts.length} total posts (${searchElapsed}s for hashtag search)`);
-
-    if (posts.length === 0) {
-      await supabase.from('weekly_batches')
-        .update({ status: 'completed', candidates_found: 0 })
-        .eq('id', batch.id);
-      return NextResponse.json({
-        success: true,
-        message: 'No posts found for your search hashtags. Try adjusting them in Settings.',
-        batch_id: batch.id,
-        candidates_found: 0,
-      });
-    }
-
-    // ----- STEP 3: Aggregate into creator profiles -----
-    const aggregated = aggregateCreatorProfiles(posts);
-    console.log(`[Scout] ${aggregated.length} unique creators`);
-
-    // ----- STEP 4: Only exclude creators you've already reviewed (approved/skipped/dm_sent) -----
+    // ----- STEP 2: Load previously reviewed creators -----
+    // We load this BEFORE searching so we know how aggressively to search
     const { data: reviewedRecords } = await supabase
       .from('outreach_records')
       .select('creator_id, creators(instagram_username)')
@@ -118,12 +158,79 @@ export async function POST() {
 
     console.log(`[Scout] ${reviewedUsernames.length} previously reviewed creators (will skip)`);
 
-    const fresh = filterCreators(aggregated, {
+    // ----- STEP 3: Adaptive search — expand if pool is too small -----
+    // Start with 50 posts/hashtag. If most creators have been reviewed,
+    // automatically expand to 150 posts/hashtag to find fresh ones.
+    const MIN_FRESH_CANDIDATES = TARGET_CANDIDATES * 3; // Need at least 30 fresh to have a good chance
+    let allPosts: Awaited<ReturnType<typeof scoutByHashtags>> = [];
+    let aggregated: Partial<Creator>[] = [];
+    let fresh: Partial<Creator>[] = [];
+
+    // --- Round 1: Quick search (50 posts/hashtag) ---
+    const searchStart = Date.now();
+    const round1Posts = await scoutByHashtags(searchHashtags, 50);
+    const round1Elapsed = Math.round((Date.now() - searchStart) / 1000);
+    console.log(`[Scout] Round 1: Found ${round1Posts.length} posts (${round1Elapsed}s)`);
+
+    allPosts = round1Posts;
+    aggregated = aggregateCreatorProfiles(allPosts);
+    console.log(`[Scout] ${aggregated.length} unique creators`);
+
+    fresh = filterCreators(aggregated, {
       minFollowers,
       maxFollowers,
       excludeUsernames: reviewedUsernames,
     });
-    console.log(`[Scout] ${fresh.length} candidates to check`);
+    console.log(`[Scout] ${fresh.length} fresh candidates after filtering reviewed`);
+
+    // --- Round 2: Expand if pool is too small and we have time ---
+    if (fresh.length < MIN_FRESH_CANDIDATES && (Date.now() - startTime) < 90000) {
+      console.log(`[Scout] Pool too small (${fresh.length} < ${MIN_FRESH_CANDIDATES}). Expanding search to 150 posts/hashtag...`);
+
+      const round2Start = Date.now();
+      const round2Posts = await scoutByHashtags(searchHashtags, 150);
+      const round2Elapsed = Math.round((Date.now() - round2Start) / 1000);
+      console.log(`[Scout] Round 2: Found ${round2Posts.length} posts (${round2Elapsed}s)`);
+
+      // Merge and re-aggregate (aggregation deduplicates by username)
+      allPosts = [...round1Posts, ...round2Posts];
+      aggregated = aggregateCreatorProfiles(allPosts);
+      console.log(`[Scout] ${aggregated.length} unique creators (after expansion)`);
+
+      fresh = filterCreators(aggregated, {
+        minFollowers,
+        maxFollowers,
+        excludeUsernames: reviewedUsernames,
+      });
+      console.log(`[Scout] ${fresh.length} fresh candidates (after expansion)`);
+    }
+
+    const totalSearchElapsed = Math.round((Date.now() - searchStart) / 1000);
+    console.log(`[Scout] Total search time: ${totalSearchElapsed}s`);
+
+    if (allPosts.length === 0) {
+      await supabase.from('weekly_batches')
+        .update({ status: 'completed', candidates_found: 0 })
+        .eq('id', batch.id);
+      return NextResponse.json({
+        success: true,
+        message: 'No posts found for your search hashtags. Try adjusting them in Settings.',
+        batch_id: batch.id,
+        candidates_found: 0,
+      });
+    }
+
+    if (fresh.length === 0) {
+      await supabase.from('weekly_batches')
+        .update({ status: 'completed', candidates_found: 0 })
+        .eq('id', batch.id);
+      return NextResponse.json({
+        success: true,
+        message: `Found ${aggregated.length} creators but all ${reviewedUsernames.length} matching ones have been reviewed already. Try adding more search hashtags in Settings to widen the pool.`,
+        batch_id: batch.id,
+        candidates_found: 0,
+      });
+    }
 
     // ----- STEP 5: Pre-sort by location match -----
     const locLower = locationTags.map(k => k.toLowerCase());
@@ -193,6 +300,12 @@ export async function POST() {
 
         console.log(`[Scout] ✓ @${creator.instagram_username} — ${creator.followers_count} followers`);
 
+        // --- Build profile text fields once (used by multiple filters) ---
+        const profileTags = (creator.recent_hashtags ?? [])
+          .map(h => h.toLowerCase().replace(/^#/, ''));
+        const bio = (creator.bio ?? '').toLowerCase();
+        const captionText = (creator.recent_captions ?? []).join(' ').toLowerCase();
+
         // --- FILTER 1: Follower range ---
         if (creator.followers_count < minFollowers) {
           console.log(`[Scout] ✗ @${creator.instagram_username} — ${creator.followers_count} followers (below ${minFollowers})`);
@@ -203,33 +316,51 @@ export async function POST() {
           continue;
         }
 
-        // --- FILTER 2: Location tag ---
+        // --- FILTER 2: Location tag (word-boundary safe) ---
         // Only check the creator's OWN profile data (hashtags, bio, captions)
-        // NOT source_hashtags — those come from discovery posts, not the creator's profile,
-        // so they don't indicate where the creator is actually from.
+        // NOT source_hashtags — those come from discovery posts, not the creator's profile.
+        // Short tags (≤4 chars: sa, wa, vic, qld, nsw) use exact hashtag match
+        // and word boundary matching in text to avoid false positives like
+        // "wa" matching inside "water" or "away".
         if (locationTags.length > 0) {
-          const profileTags = (creator.recent_hashtags ?? [])
-            .map(h => h.toLowerCase().replace(/^#/, ''));
-          const bio = (creator.bio ?? '').toLowerCase();
-          const captionText = (creator.recent_captions ?? []).join(' ').toLowerCase();
-
           const matchesLocation = locLower.some(loc =>
-            profileTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
+            profileTags.some(tag => matchesLocationInHashtag(loc, tag)) ||
+            matchesLocationInText(loc, bio) ||
+            matchesLocationInText(loc, captionText)
           );
 
           if (!matchesLocation) {
             console.log(`[Scout] ✗ @${creator.instagram_username} — no location match in profile/bio/captions`);
             continue;
           } else {
-            // Log what matched so we can verify location filtering is working
             const matchedOn = locLower.filter(loc =>
-              profileTags.some(tag => tag.includes(loc)) || bio.includes(loc) || captionText.includes(loc)
+              profileTags.some(tag => matchesLocationInHashtag(loc, tag)) ||
+              matchesLocationInText(loc, bio) ||
+              matchesLocationInText(loc, captionText)
             );
             console.log(`[Scout] ✓ @${creator.instagram_username} — location match: [${matchedOn.join(', ')}]`);
           }
         }
 
-        // --- FILTER 3: Minimum reels ---
+        // --- FILTER 3: Niche relevance ---
+        // Verify the creator actually posts spearfishing/freediving content.
+        // Checks bio, captions, and hashtags against niche keywords derived
+        // from the brand's search hashtags + core spearfishing terms.
+        if (nicheTerms.length > 0) {
+          const allProfileText = [...profileTags, bio, captionText].join(' ');
+
+          const matchesNiche = nicheTerms.some(term => allProfileText.includes(term));
+
+          if (!matchesNiche) {
+            console.log(`[Scout] ✗ @${creator.instagram_username} — no niche match (not spearfishing content)`);
+            continue;
+          } else {
+            const matchedNiche = nicheTerms.filter(term => allProfileText.includes(term));
+            console.log(`[Scout] ✓ @${creator.instagram_username} — niche match: [${matchedNiche.join(', ')}]`);
+          }
+        }
+
+        // --- FILTER 4: Minimum reels ---
         if (minReels > 0) {
           const estimatedReels = Math.round(((creator.reels_percentage ?? 0) / 100) * creator.posts_count);
           if (creator.reels_percentage !== undefined && creator.reels_percentage !== null && estimatedReels < minReels) {
@@ -335,7 +466,7 @@ export async function POST() {
       action: 'scouting_completed',
       details: {
         batch_id: batch.id,
-        posts_found: posts.length,
+        posts_found: allPosts.length,
         creators_aggregated: aggregated.length,
         verified: verifiedCount,
         qualified: qualified.length,
@@ -352,7 +483,7 @@ export async function POST() {
       batch_id: batch.id,
       candidates_found: top10.length,
       verified_count: verifiedCount,
-      total_posts_scanned: posts.length,
+      total_posts_scanned: allPosts.length,
     });
   } catch (error) {
     console.error('[Scout] Error:', error);
